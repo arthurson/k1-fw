@@ -7,6 +7,8 @@
  *       ▼
  *   AUDIO_IO_Update()   ← called from main loop
  *       │
+ *       ├─► DC offset removal (optional, AUDIO_IO_DC_REMOVE)
+ *       │
  *       ├─► sink[0](buf, N)   e.g. oscilloscope / FFT
  *       ├─► sink[1](buf, N)   e.g. APRS decoder
  *       ├─► sink[2](buf, N)   e.g. flash recorder
@@ -42,6 +44,23 @@
 #include <string.h>
 
 // ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+// Enable DC offset removal to compensate for ADC charge injection drift
+#define AUDIO_IO_DC_REMOVE
+
+// DC removal mode:
+// 0 = IIR filter (fast, low memory, good for continuous streaming like APRS)
+// 1 = Block average (precise, needs block buffer, slight latency)
+#define AUDIO_IO_DC_MODE 0
+
+// IIR filter shift: higher = slower tracking, more stable
+// 6 = ~64 samples time constant at 9600 Hz (~6.7ms)
+// 7 = ~128 samples (~13ms), etc.
+#define AUDIO_IO_DC_IIR_SHIFT 6
+
+// ---------------------------------------------------------------------------
 // External ADC state from board.c
 // ---------------------------------------------------------------------------
 extern volatile uint16_t adc_dma_buffer[2 * APRS_BUFFER_SIZE];
@@ -66,6 +85,65 @@ static AudioSource_Fn active_source;
 #ifdef AUDIO_IO_STATS
 static AudioIO_Stats_t stats;
 #endif
+
+// ---------------------------------------------------------------------------
+// DC offset removal state
+// ---------------------------------------------------------------------------
+#ifdef AUDIO_IO_DC_REMOVE
+
+// IIR filter state (Q16 fixed point for precision)
+static int32_t dc_iir_state = 0;
+static bool dc_iir_initialized = false;
+
+// Working buffer for DC-corrected samples
+// Size: max(APRS_BUFFER_SIZE, AUDIO_IO_BLOCK_SIZE)
+static int16_t dc_corrected_buffer[APRS_BUFFER_SIZE];
+
+/** Remove DC offset using IIR high-pass filter.
+ *
+ * y[n] = x[n] - mean(x)
+ * mean[n] = mean[n-1] + alpha * (x[n] - mean[n-1])
+ *
+ * alpha = 1/2^shift for efficiency (division by shift)
+ *
+ * @param src Source buffer (uint16_t ADC values)
+ * @param dst Destination buffer (int16_t DC-corrected values)
+ * @param n Number of samples
+ */
+static void dc_remove_iir(const uint16_t *src, int16_t *dst, uint32_t n) {
+  // Initialize on first call with first sample estimate
+  if (!dc_iir_initialized) {
+    dc_iir_state = ((int32_t)src[0]) << 16;
+    dc_iir_initialized = true;
+  }
+
+  for (uint32_t i = 0; i < n; i++) {
+    int32_t sample = (int32_t)src[i];
+
+    // Update DC estimate: dc += (sample - dc) >> shift
+    // This is exponential moving average with time constant ~2^shift samples
+    dc_iir_state += (sample - (dc_iir_state >> 16))
+                    << (16 - AUDIO_IO_DC_IIR_SHIFT);
+
+    // Output: sample - DC (convert back from Q16)
+    // Note: dc_iir_state is Q16, so >>16 gives integer part
+    int32_t dc_value = dc_iir_state >> 16;
+    dst[i] = (int16_t)(sample - dc_value);
+  }
+}
+
+/** Get current DC offset for monitoring/debugging */
+static int16_t dc_get_current_offset(void) {
+  return (int16_t)(dc_iir_state >> 16);
+}
+
+/** Reset DC filter (call when switching modes or after long silence) */
+static void dc_reset(void) {
+  dc_iir_initialized = false;
+  dc_iir_state = 0;
+}
+
+#endif // AUDIO_IO_DC_REMOVE
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,14 +177,20 @@ static void refill_dac_half(uint16_t *half) {
 }
 
 /** Dispatch one ADC block to all registered sinks. */
-static void dispatch_to_sinks(const volatile uint16_t *src) {
+static void dispatch_to_sinks(const int16_t *src) {
   for (int i = 0; i < AUDIO_IO_MAX_SINKS; i++) {
     if (sinks[i])
-      sinks[i]((const uint16_t *)src, AUDIO_IO_BLOCK_SIZE);
+      sinks[i](src, AUDIO_IO_BLOCK_SIZE);
   }
 #ifdef AUDIO_IO_STATS
   stats.blocks_dispatched++;
 #endif
+}
+
+// Version for raw uint16_t (when DC removal disabled)
+static void dispatch_to_sinks_u16(const uint16_t *src) {
+  // Cast to int16_t* — sinks expect signed for audio processing
+  dispatch_to_sinks((const int16_t *)src);
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +267,8 @@ static void dac_trigger_init(void) {
   LL_DAC_EnableDMAReq(DAC1, LL_DAC_CHANNEL_1);
   LL_DAC_Enable(DAC1, LL_DAC_CHANNEL_1);
   // DAC needs ~1 us after enable before it can drive output (per RM)
-  for (volatile int i = 0; i < 100; i++) {}
+  for (volatile int i = 0; i < 100; i++) {
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +304,10 @@ void AUDIO_IO_Init(void) {
   memset(sinks, 0, sizeof(sinks));
   active_source = NULL;
 
+#ifdef AUDIO_IO_DC_REMOVE
+  dc_reset();
+#endif
+
 #ifdef AUDIO_IO_STATS
   memset(&stats, 0, sizeof(stats));
 #endif
@@ -229,6 +318,11 @@ void AUDIO_IO_Init(void) {
 
   LogC(LOG_C_BRIGHT_WHITE, "AUDIO_IO: init ok (Fs=%u Hz, DAC block=%u)",
        AUDIO_IO_FS_HZ, AUDIO_IO_DAC_BLOCK);
+
+#ifdef AUDIO_IO_DC_REMOVE
+  LogC(LOG_C_BRIGHT_WHITE, "AUDIO_IO: DC removal enabled (IIR shift=%d)",
+       AUDIO_IO_DC_IIR_SHIFT);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -239,14 +333,43 @@ void AUDIO_IO_Update(void) {
   // ADC half-A ready
   if (aprs_ready1) {
     aprs_ready1 = false;
-    dispatch_to_sinks(&adc_dma_buffer[0]);
+
+#ifdef AUDIO_IO_DC_REMOVE
+    // Remove DC offset before dispatching to sinks
+    dc_remove_iir((const uint16_t *)&adc_dma_buffer[0], dc_corrected_buffer,
+                  APRS_BUFFER_SIZE);
+    dispatch_to_sinks(dc_corrected_buffer);
+#else
+    dispatch_to_sinks_u16(&adc_dma_buffer[0]);
+#endif
   }
+
   // ADC half-B ready
   if (aprs_ready2) {
     aprs_ready2 = false;
-    dispatch_to_sinks(&adc_dma_buffer[APRS_BUFFER_SIZE]);
+
+#ifdef AUDIO_IO_DC_REMOVE
+    // Remove DC offset before dispatching to sinks
+    dc_remove_iir((const uint16_t *)&adc_dma_buffer[APRS_BUFFER_SIZE],
+                  dc_corrected_buffer, APRS_BUFFER_SIZE);
+    dispatch_to_sinks(dc_corrected_buffer);
+#else
+    dispatch_to_sinks_u16(&adc_dma_buffer[APRS_BUFFER_SIZE]);
+#endif
   }
 }
+
+// ---------------------------------------------------------------------------
+// Public API — DC removal control
+// ---------------------------------------------------------------------------
+
+#ifdef AUDIO_IO_DC_REMOVE
+
+void AUDIO_IO_DCReset(void) { dc_reset(); }
+
+int16_t AUDIO_IO_DCGetOffset(void) { return dc_get_current_offset(); }
+
+#endif // AUDIO_IO_DC_REMOVE
 
 // ---------------------------------------------------------------------------
 // Public API — input sinks
@@ -316,4 +439,3 @@ bool AUDIO_IO_SourceActive(void) { return active_source != NULL; }
 const AudioIO_Stats_t *AUDIO_IO_GetStats(void) { return &stats; }
 void AUDIO_IO_ResetStats(void) { memset(&stats, 0, sizeof(stats)); }
 #endif
-

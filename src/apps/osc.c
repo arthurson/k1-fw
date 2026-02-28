@@ -367,6 +367,7 @@ static void process_block(const volatile uint16_t *src, uint32_t len) {
   osc.clip_flag = (dmaMin <= 8) || (dmaMax >= 4087);
 }
 
+
 static void osc_sink(const uint16_t *buf, uint32_t n) {
   process_block(buf, n); // та же логика, но buf уже валиден
   ook_sink(buf, n);

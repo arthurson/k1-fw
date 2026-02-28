@@ -194,10 +194,10 @@ LL_ADC_REG_SetContinuousMode(ADC1, LL_ADC_REG_CONV_CONTINUOUS); */
   // Single rank — only CH9
   LL_ADC_REG_SetSequencerLength(ADC1, LL_ADC_REG_SEQ_SCAN_DISABLE);
   LL_ADC_REG_SetSequencerRanks(ADC1, LL_ADC_REG_RANK_1, LL_ADC_CHANNEL_9);
-  /* LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_9,
-                                LL_ADC_SAMPLINGTIME_239CYCLES_5); */
   LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_9,
-                                LL_ADC_SAMPLINGTIME_28CYCLES_5);
+                                LL_ADC_SAMPLINGTIME_239CYCLES_5);
+  /* LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_9,
+                                LL_ADC_SAMPLINGTIME_28CYCLES_5); */
 
   // -----------------------------------------------------------------------
   // Injected group: CH8 (battery voltage) → software-triggered, single shot

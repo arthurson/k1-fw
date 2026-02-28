@@ -154,4 +154,15 @@ const AudioIO_Stats_t *AUDIO_IO_GetStats(void);
 void AUDIO_IO_ResetStats(void);
 #endif
 
+#define AUDIO_IO_DC_REMOVE
+
+// DC removal API
+#ifdef AUDIO_IO_DC_REMOVE
+/** Reset DC offset estimator (call after long silence or mode change) */
+void AUDIO_IO_DCReset(void);
+
+/** Get current estimated DC offset (for debugging/monitoring) */
+int16_t AUDIO_IO_DCGetOffset(void);
+#endif
+
 #endif // AUDIO_IO_H
