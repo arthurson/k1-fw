@@ -1,7 +1,7 @@
 #ifndef DRIVER_GPIO_H
 #define DRIVER_GPIO_H
 
-#include "py32f071_ll_gpio.h"
+#include "../external/PY32F071_HAL_Driver/Inc/py32f071_ll_gpio.h"
 #include <stdbool.h>
 #include <stdint.h>
 

@@ -58,7 +58,7 @@ void BK1080_Init(uint32_t f, bool bEnable) {
     currentF = 0;
     BK1080_SetFrequency(f);
   } else {
-    BK1080_WriteRegister(BK1080_REG_02_POWER_CONFIGURATION, 0x0240);
+    BK1080_WriteRegister(BK1080_REG_02_POWER_CONFIGURATION, 0x0241);
   }
 }
 

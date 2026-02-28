@@ -141,132 +141,114 @@ static uint16_t BK_SPI_Transfer16(void) {
   return value;
 }
 
+// Optimized bit-bang helpers (faster, with minimal delay - test if nops needed)
+static inline void BK4819_WriteBit(bool bit) {
+  if (bit)
+    SDA_Set();
+  else
+    SDA_Reset();
+  SHORT_DELAY();
+  SCL_Set();
+  __NOP();
+  __NOP();
+  SCL_Reset();
+  __NOP();
+  __NOP();
+}
+
+static inline bool BK4819_ReadBit(void) {
+  bool bit = SDA_ReadInput();
+  SCL_Set();
+  __NOP();
+  __NOP();
+  SCL_Reset();
+  __NOP();
+  __NOP();
+  return bit;
+}
+
+// Optimized write (combines U8/U16)
+static void BK4819_WriteBytes(const uint8_t *data, uint8_t len) {
+  SCL_Reset();
+  for (uint8_t i = 0; i < len; i++) {
+    uint8_t byte = data[i];
+    for (uint8_t j = 0; j < 8; j++) {
+      BK4819_WriteBit((byte & 0x80) != 0);
+      byte <<= 1;
+    }
+  }
+}
+
+// Optimized read U16
 static uint16_t BK4819_ReadU16(void) {
-  unsigned int i;
-  uint16_t Value;
-
-  SDA_SetDir(false);
-  SHORT_DELAY();
-  Value = 0;
-  for (i = 0; i < 16; i++) {
-    Value <<= 1;
-    Value |= SDA_ReadInput();
-    SCL_Set();
-    SHORT_DELAY();
-    SCL_Reset();
-    SHORT_DELAY();
+  uint16_t value = 0;
+  SDA_SetDir(false); // Input mode
+  // Minimal delay: __NOP(); __NOP();
+  for (uint8_t i = 0; i < 16; i++) {
+    value = (value << 1) | BK4819_ReadBit();
   }
-  SDA_SetDir(true);
-
-  return Value;
+  SDA_SetDir(true); // Output mode
+  return value;
 }
 
+// Register cache (expandable array for more regs if needed)
+#define BK4819_REG_COUNT 1
+static uint16_t reg_cache[BK4819_REG_COUNT] = {[0 ... BK4819_REG_COUNT - 1] =
+                                                   0xFFFF}; // 0xFFFF = invalid
+static const uint8_t cached_regs[] = {
+    BK4819_REG_30, /* add more like BK4819_REG_7E */}; // List of cached
+
+// Check if reg is cached
+static bool is_cached(BK4819_REGISTER_t reg) {
+  for (size_t i = 0; i < sizeof(cached_regs) / sizeof(cached_regs[0]); i++) {
+    if (cached_regs[i] == reg)
+      return true;
+  }
+  return false;
+}
+
+// Read register (with cache)
 uint16_t BK4819_ReadRegister(BK4819_REGISTER_t reg) {
-  if (reg == BK4819_REG_30 && reg30state != 0xffff) {
-    return reg30state;
+  if (is_cached(reg) && reg_cache[reg] != 0xFFFF) {
+    return reg_cache[reg];
   }
   __disable_irq();
-  // printf("R R 0x%x\n", reg);
-  uint16_t Value;
-
-  CS_Release();
-  SCL_Reset();
-
-  SHORT_DELAY();
-
   CS_Assert();
-  BK4819_WriteU8(reg | 0x80);
-  Value = BK4819_ReadU16();
+  uint8_t addr = reg | 0x80;
+  BK4819_WriteBytes(&addr, 1); // Send address
+  uint16_t value = BK4819_ReadU16();
   CS_Release();
-
-  SHORT_DELAY();
-
   SCL_Set();
   SDA_Set();
   __enable_irq();
-
-  return Value;
+  return value;
 }
 
-void BK4819_WriteRegister(BK4819_REGISTER_t reg, uint16_t Data) {
-  // printf("W R 0x%x\n", reg);
-  if (reg == BK4819_REG_30) {
-    reg30state = Data;
+// Write register (with cache update)
+void BK4819_WriteRegister(BK4819_REGISTER_t reg, uint16_t data) {
+  if (is_cached(reg)) {
+    reg_cache[reg] = data;
   }
   __disable_irq();
-  CS_Release();
-  SCL_Reset();
-
-  SHORT_DELAY();
-
   CS_Assert();
-  BK4819_WriteU8(reg);
-
-  SHORT_DELAY();
-
-  BK4819_WriteU16(Data);
-
-  SHORT_DELAY();
-
+  uint8_t buf[3] = {reg, data >> 8, data & 0xFF};
+  BK4819_WriteBytes(buf, 3);
   CS_Release();
-
-  SHORT_DELAY();
-
   SCL_Set();
   SDA_Set();
   __enable_irq();
 }
 
-void BK4819_WriteU8(uint8_t Data) {
-  unsigned int i;
-
-  SCL_Reset();
-  for (i = 0; i < 8; i++) {
-    if ((Data & 0x80) == 0)
-      SDA_Reset();
-    else
-      SDA_Set();
-
-    SHORT_DELAY();
-    SCL_Set();
-    SHORT_DELAY();
-
-    Data <<= 1;
-
-    SCL_Reset();
-    SHORT_DELAY();
-  }
-}
-
-void BK4819_WriteU16(uint16_t Data) {
-  unsigned int i;
-
-  SCL_Reset();
-  for (i = 0; i < 16; i++) {
-    if ((Data & 0x8000) == 0)
-      SDA_Reset();
-    else
-      SDA_Set();
-
-    SHORT_DELAY();
-    SCL_Set();
-
-    Data <<= 1;
-
-    SHORT_DELAY();
-    SCL_Reset();
-    SHORT_DELAY();
-  }
-}
-
+// Field access (unchanged, but now used via macros)
 uint16_t BK4819_GetRegValue(RegisterSpec spec) {
   return (BK4819_ReadRegister(spec.num) >> spec.offset) & spec.mask;
 }
 
 void BK4819_SetRegValue(RegisterSpec spec, uint16_t value) {
-  uint16_t reg = BK4819_ReadRegister(spec.num);
-  reg &= ~(spec.mask << spec.offset);
-  BK4819_WriteRegister(spec.num, reg | (value << spec.offset));
+  uint16_t reg_val = BK4819_ReadRegister(spec.num);
+  reg_val &= ~(spec.mask << spec.offset);
+  reg_val |= (value & spec.mask) << spec.offset;
+  BK4819_WriteRegister(spec.num, reg_val);
 }
 
 // ============================================================================
