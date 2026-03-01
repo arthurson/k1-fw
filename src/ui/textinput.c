@@ -1,9 +1,10 @@
 #include "textinput.h"
 #include "../driver/st7565.h"
+#include "../driver/systick.h"
 #include "../ui/graphics.h"
 #include <string.h>
 
-char *gTextinputText = "";
+char gTextinputText[16] = {0};
 uint8_t gTextInputSize = 15;
 bool gTextInputActive;
 void (*gTextInputCallback)(void);
@@ -52,6 +53,8 @@ static char inputField[16] = {0};
 static uint8_t inputIndex = 0;
 static bool coursorBlink = true;
 
+static uint32_t lastBlink;
+
 static void insert(char c) {
   if (inputField[inputIndex] != '\0') {
     memmove(inputField + inputIndex + 1, inputField + inputIndex,
@@ -77,7 +80,10 @@ void TEXTINPUT_init(void) {
 }
 
 void TEXTINPUT_update() {
-  coursorBlink = !coursorBlink;
+  if (Now() - lastBlink > 500) {
+    coursorBlink = !coursorBlink;
+    lastBlink = Now();
+  }
   gRedrawScreen = true;
 }
 
@@ -253,4 +259,12 @@ void TEXTINPUT_render(void) {
   PrintMedium(11 + 86, LCD_HEIGHT - 2,
               currentSet != lettersCapital ? "ABC" : "abc");
   FillRect(0 + 86, LCD_HEIGHT - 9, 7, 9, C_INVERT);
+}
+
+void TEXTINPUT_Show(void *cb, uint8_t len) {
+  gTextInputSize = len;
+  gTextinputText[0] = '\0';
+  gTextInputCallback = cb;
+  TEXTINPUT_init();
+  gTextInputActive = true;
 }

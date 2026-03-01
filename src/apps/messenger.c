@@ -11,6 +11,7 @@
 #include "../ui/graphics.h"
 #include "../ui/statusline.h"
 #include "../ui/textinput.h"
+#include "../ui/toast.h"
 #include "apps.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -55,6 +56,7 @@ static void unpackFskToText(char *text) {
 
 // Callback после ввода текста: отправка сообщения
 static void sendMessageCallback(void) {
+  TOAST_Push("GOT: %s", gTextinputText);
   // Добавить в историю как исходящее
   if (msgCount < MAX_MESSAGES) {
     messages[msgCount].incoming = false;
@@ -69,8 +71,8 @@ static void sendMessageCallback(void) {
 
   // Упаковать и отправить
   packTextToFsk(gTextinputText);
-  RF_EnterFsk();
   RADIO_ToggleTX(ctx, true);
+  RF_EnterFsk();
   RF_FskTransmit();
   RADIO_ToggleTX(ctx, false);
 
@@ -130,10 +132,7 @@ bool MESSENGER_key(KEY_Code_t key, Key_State_t state) {
     switch (key) {
     case KEY_MENU:
       // Ввод нового сообщения
-      gTextinputText[0] = '\0';
-      gTextInputCallback = sendMessageCallback;
-      gTextInputActive = true;
-      TEXTINPUT_init();
+      TEXTINPUT_Show(sendMessageCallback, 15);
       return true;
 
     case KEY_EXIT:
@@ -171,7 +170,7 @@ bool MESSENGER_key(KEY_Code_t key, Key_State_t state) {
 
 void MESSENGER_render(void) {
   // Заголовок
-  PrintMediumEx(LCD_XCENTER, 12, POS_C, C_FILL, "Messenger at %s",
+  PrintMediumEx(LCD_XCENTER, 14, POS_C, C_FILL, "%s",
                 RADIO_GetParamValueString(ctx, PARAM_FREQUENCY));
 
   // Отображение истории сообщений (последние 5, с учетом скролла)

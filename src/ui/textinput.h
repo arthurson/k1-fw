@@ -11,8 +11,10 @@ void TEXTINPUT_update();
 void TEXTINPUT_render();
 void TEXTINPUT_deinit();
 
+void TEXTINPUT_Show(void *cb, uint8_t len);
+
 extern bool gTextInputActive;
-extern char *gTextinputText;
+extern char gTextinputText[16];
 extern uint8_t gTextInputSize;
 extern void (*gTextInputCallback)(void);
 
