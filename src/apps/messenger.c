@@ -130,7 +130,7 @@ void MESSENGER_update(void) {
 bool MESSENGER_key(KEY_Code_t key, Key_State_t state) {
   if (state == KEY_RELEASED) {
     switch (key) {
-    case KEY_MENU:
+    case KEY_STAR:
       // Ввод нового сообщения
       TEXTINPUT_Show(sendMessageCallback, 15);
       return true;
@@ -189,5 +189,5 @@ void MESSENGER_render(void) {
   }
 
   // Подсказки
-  PrintSmallEx(0, LCD_HEIGHT - 2, POS_L, C_FILL, "MENU: New msg | EXIT: Quit");
+  PrintSmallEx(0, LCD_HEIGHT - 2, POS_L, C_FILL, "*: New msg | EXIT: Quit");
 }
