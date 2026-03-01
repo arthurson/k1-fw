@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define FSK_LEN 4
+#define FSK_LEN 8
 
 // Публичные буферы для FSK данных
 extern uint16_t FSK_TXDATA[FSK_LEN];

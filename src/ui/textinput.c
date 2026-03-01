@@ -133,7 +133,7 @@ bool TEXTINPUT_key(KEY_Code_t key, Key_State_t state) {
     case KEY_9:
       if (currentSet == numbers) {
         if (strlen(inputField) < gTextInputSize) {
-          insert(key + '0');
+          insert(key - KEY_0 + '0');
         }
         return true;
       }
