@@ -28,6 +28,7 @@ const uint16_t REG_59 =
 
 uint16_t FSK_TXDATA[FSK_LEN];
 uint16_t FSK_RXDATA[FSK_LEN];
+bool gNewFskMessage;
 
 void RF_EnterFsk() {
   // а) Останавливаем RX если был включен
@@ -198,6 +199,7 @@ bool RF_FskReceive(uint16_t int_bits) {
       printf("%04X ", FSK_RXDATA[i]);
     }
     printf("\n");
+    gNewFskMessage = true;
 
     rxIdx = 0;
     return true;

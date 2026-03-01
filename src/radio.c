@@ -348,9 +348,9 @@ static void setupToneDetection(VFOContext *ctx) {
 
   uint16_t InterruptMask = BK4819_REG_3F_CxCSS_TAIL;
 
-  /* InterruptMask |= BK4819_REG_3F_FSK_RX_SYNC |
+  InterruptMask |= BK4819_REG_3F_FSK_RX_SYNC |
                    BK4819_REG_3F_FSK_FIFO_ALMOST_FULL |
-                   BK4819_REG_3F_FSK_RX_FINISHED; */
+                   BK4819_REG_3F_FSK_RX_FINISHED;
 
   // InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
 
@@ -381,7 +381,7 @@ static void setupToneDetection(VFOContext *ctx) {
   }
   BK4819_WriteRegister(BK4819_REG_3F, InterruptMask);
 
-  // RF_EnterFsk();
+  RF_EnterFsk();
 }
 
 static void sendEOT() {

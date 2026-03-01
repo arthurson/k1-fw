@@ -9,6 +9,7 @@
 // Публичные буферы для FSK данных
 extern uint16_t FSK_TXDATA[FSK_LEN];
 extern uint16_t FSK_RXDATA[FSK_LEN];
+extern bool gNewFskMessage;
 
 // Функции управления RF режимом
 void RF_Txon(void);

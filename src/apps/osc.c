@@ -367,7 +367,6 @@ static void process_block(const volatile uint16_t *src, uint32_t len) {
   osc.clip_flag = (dmaMin <= 8) || (dmaMax >= 4087);
 }
 
-
 static void osc_sink(const uint16_t *buf, uint32_t n) {
   process_block(buf, n); // та же логика, но buf уже валиден
   ook_sink(buf, n);
@@ -521,7 +520,8 @@ static void drawSpectrum(void) {
 static void drawOOK(void) {
   PrintSmallEx(0, 24, POS_L, C_FILL, "LEN: %u", ookLen);
   for (uint16_t i = 0; i < ookLen; ++i) {
-    PrintSmallEx((i % 8) * 10, 32 + i / 8, POS_L, C_FILL, "%02X", ookData[i]);
+    PrintSmallEx((i % 8) * 10, 32 + (i / 8) * 6, POS_L, C_FILL, "%02X",
+                 ookData[i]);
   }
 }
 
