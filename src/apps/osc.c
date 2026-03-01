@@ -13,6 +13,7 @@
 #include "apps.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define SMALL_FONT_H 6
@@ -40,8 +41,11 @@ typedef struct {
 // ---------------------------------------------------------------------------
 typedef struct {
   // --- WAVE ---
-  uint8_t disp_buf[LCD_WIDTH];
+  uint16_t
+      disp_buf[LCD_WIDTH]; // хранит масштабированные значения АЦП (0..4095)
   uint8_t disp_head;
+  uint16_t disp_vmin; // авто-диапазон для текущего кадра
+  uint16_t disp_vmax;
 
   // --- FFT ---
   uint8_t fft_acc_pos;
@@ -182,8 +186,11 @@ static void setTriggerLevel(uint32_t v, uint32_t _) {
 }
 
 static void triggerArm(void) {
-  memset(osc.disp_buf, val_to_y(2048), sizeof(osc.disp_buf));
+  for (int i = 0; i < LCD_WIDTH; i++)
+    osc.disp_buf[i] = 2048;
   osc.disp_head = 0;
+  osc.disp_vmin = 0;
+  osc.disp_vmax = MAX_VAL;
   osc.decimate_cnt = 0;
   osc.fft_acc_pos = 0;
   osc.fft_fresh = false;
@@ -295,7 +302,8 @@ static void push_sample(uint16_t raw) {
       v = 0;
     if (v > (int32_t)MAX_VAL)
       v = MAX_VAL;
-    osc.disp_buf[osc.disp_head] = val_to_y((uint16_t)v);
+    osc.disp_buf[osc.disp_head] =
+        (uint16_t)v; // сырое значение, Y считается при отрисовке
     osc.disp_head = (uint8_t)((osc.disp_head + 1) % LCD_WIDTH);
   }
 
@@ -305,28 +313,13 @@ static void push_sample(uint16_t raw) {
   }
 
   if (osc.fft_acc_pos == 128) {
-    uint16_t dc_snap = (uint16_t)(osc.dc_iir >> 8);
-
-    for (int i = 0; i < 128; i++) {
-      int32_t v = (int32_t)((uint16_t *)fft_re)[i] - dc_snap;
-      if (v > 32767)
-        v = 32767;
-      if (v < -32767)
-        v = -32767;
-      fft_re[i] = (int16_t)v;
-      fft_im[i] = 0;
-    }
-
-    // Окно Ханна
-    for (int i = 0; i < 128; i++) {
-      fft_re[i] = (int16_t)((int32_t)fft_re[i] * hann128[i] >> 15);
-    }
-
-    FFT_128(fft_re, fft_im);
+    FFT_RemoveDC(fft_re);
+    FFT_ApplyWindow(fft_re);
+    FFT_Forward(fft_re, fft_im);
 
     {
       static uint16_t mag_tmp[FFT_BINS];
-      FFT_Magnitude(fft_re, fft_im, mag_tmp, FFT_BINS);
+      FFT_MagnitudeFast(fft_re, fft_im, mag_tmp, FFT_BINS);
       for (int k = 0; k < FFT_BINS; k++) {
         uint16_t v = mag_tmp[k] >> 1;
         osc.fft_mag[k] = v > 255 ? 255 : (uint8_t)v;
@@ -425,19 +418,58 @@ static void drawGrid(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Отрисовка — WAVE
+// val_to_y_ranged — маппинг [vmin..vmax] на пиксели экрана
+// ---------------------------------------------------------------------------
+static inline uint8_t val_to_y_ranged(uint16_t val, uint16_t vmin,
+                                      uint16_t vmax) {
+  if (vmax <= vmin)
+    return (uint8_t)(OSC_TOP_MARGIN + OSC_GRAPH_H / 2);
+  int32_t range = vmax - vmin;
+  int y = OSC_TOP_MARGIN + OSC_GRAPH_H - 1 -
+          (int32_t)(val - vmin) * (OSC_GRAPH_H - 1) / range;
+  if (y < OSC_TOP_MARGIN)
+    y = OSC_TOP_MARGIN;
+  if (y >= OSC_TOP_MARGIN + OSC_GRAPH_H)
+    y = OSC_TOP_MARGIN + OSC_GRAPH_H - 1;
+  return (uint8_t)y;
+}
+
+// ---------------------------------------------------------------------------
+// Отрисовка — WAVE  (авто-масштаб: сигнал всегда заполняет экран)
 // ---------------------------------------------------------------------------
 static void drawWaveform(void) {
-  int prev_y = osc.disp_buf[osc.disp_head];
+  // Сканируем буфер для авто-диапазона
+  uint16_t vmin = MAX_VAL, vmax = 0;
+  for (int i = 0; i < LCD_WIDTH; i++) {
+    if (osc.disp_buf[i] < vmin)
+      vmin = osc.disp_buf[i];
+    if (osc.disp_buf[i] > vmax)
+      vmax = osc.disp_buf[i];
+  }
+  // Паддинг ~12% чтобы сигнал не упирался в края
+  uint16_t span = vmax - vmin;
+  uint16_t pad = span / 8 + 16;
+  vmin = (vmin > pad) ? vmin - pad : 0;
+  vmax = (vmax + pad <= MAX_VAL) ? vmax + pad : MAX_VAL;
+  // Минимальный диапазон чтобы не делить на ноль при постоянном DC
+  if ((uint16_t)(vmax - vmin) < 60) {
+    uint16_t mid = (uint16_t)((vmin + vmax) / 2);
+    vmin = (mid >= 30) ? mid - 30 : 0;
+    vmax = (mid + 30 <= MAX_VAL) ? mid + 30 : MAX_VAL;
+  }
+  osc.disp_vmin = vmin;
+  osc.disp_vmax = vmax;
+
+  int prev_y = val_to_y_ranged(osc.disp_buf[osc.disp_head], vmin, vmax);
   for (int x = 1; x < LCD_WIDTH; x++) {
     uint8_t idx = (uint8_t)((osc.disp_head + x) % LCD_WIDTH);
-    int y = osc.disp_buf[idx];
+    int y = val_to_y_ranged(osc.disp_buf[idx], vmin, vmax);
     DrawLine(x - 1, prev_y, x, y, C_FILL);
     prev_y = y;
   }
-  // Линия идеального центра (2048) — пунктиром
+  // Пунктир на уровне 0V (GND = ADC 0) и 2048 (Vref/2)
   {
-    int cy = val_to_y(2048);
+    int cy = val_to_y_ranged(2048, vmin, vmax);
     for (int x = 0; x < LCD_WIDTH; x += 6)
       PutPixel(x, cy, C_FILL);
   }
@@ -446,7 +478,7 @@ static void drawWaveform(void) {
 static void drawTriggerMarker(void) {
   if (!osc.show_trigger)
     return;
-  int y = val_to_y(osc.trigger_level);
+  int y = val_to_y_ranged(osc.trigger_level, osc.disp_vmin, osc.disp_vmax);
   for (int i = 0; i < 3; i++) {
     PutPixel(i, y, C_FILL);
     PutPixel(LCD_WIDTH - 1 - i, y, C_FILL);
@@ -526,51 +558,42 @@ static void drawOOK(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Отрисовка — метрики качества сигнала (VU-бар, DC, клиппинг)
-// Занимает строки 3-4 в шапке (y = SMALL_FONT_H*3 и SMALL_FONT_H*4-1)
+// Отрисовка — метрики сигнала в вольтах
+// PY32F071: ADC 12-бит, Vref = 3.3V → 1 LSB = 3300/4095 мВ
 // ---------------------------------------------------------------------------
-#define SIG_FULL_AMP 2048u // полная амплитуда = Vref/2
+#define VREF_MV 3300u
+
+// Форматирует мВ как "X.XXV" или "XXXmV" в буфер
+static void fmt_mv(char *buf, uint8_t buflen, uint32_t mv) {
+  if (mv >= 1000)
+    snprintf(buf, buflen, "%lu.%02luV", mv / 1000, (mv % 1000) / 10);
+  else
+    snprintf(buf, buflen, "%lumV", mv);
+}
 
 static void drawSignalInfo(void) {
-  // --- Уровень в процентах (0..100%) ---
-  uint8_t level_pct = (uint8_t)((uint32_t)osc.sig_amp * 100u / SIG_FULL_AMP);
-  if (level_pct > 100)
-    level_pct = 100;
+  // Vpp = peak-to-peak по последнему DMA-блоку
+  uint32_t vpp_mv = (uint32_t)(dmaMax - dmaMin) * VREF_MV / MAX_VAL;
+  // Vdc = DC-центр сигнала
+  uint32_t vdc_mv = (uint32_t)osc.sig_mid * VREF_MV / MAX_VAL;
+  // Vmin / Vmax
+  uint32_t vmin_mv = (uint32_t)dmaMin * VREF_MV / MAX_VAL;
+  uint32_t vmax_mv = (uint32_t)dmaMax * VREF_MV / MAX_VAL;
 
-  // --- DC-смещение от идеального центра ---
-  int16_t dc_err = (int16_t)osc.sig_mid - 2048;
+  char sbuf[10];
 
-  // --- VU-бар: y-позиция строки 3 (y=18), высота 4 пикселя ---
-  // Ширина бара = LCD_WIDTH - 28 (оставляем 28px слева для текста)
-  const int BAR_X = 28; // начало бара
-  const int BAR_W = LCD_WIDTH - BAR_X - 1;
-  const int BAR_Y = SMALL_FONT_H * 3 - 4; // верх бара
-  const int BAR_H = 4;
+  // Строка 3: Vpp слева,  Vdc справа
+  fmt_mv(sbuf, sizeof(sbuf), vpp_mv);
+  PrintSmallEx(0, SMALL_FONT_H * 3, POS_L, C_FILL, "Vpp:%s", sbuf);
 
-  // Рамка
-  DrawLine(BAR_X, BAR_Y, BAR_X + BAR_W, BAR_Y, C_FILL);
-  DrawLine(BAR_X, BAR_Y + BAR_H, BAR_X + BAR_W, BAR_Y + BAR_H, C_FILL);
-  DrawLine(BAR_X, BAR_Y, BAR_X, BAR_Y + BAR_H, C_FILL);
-  DrawLine(BAR_X + BAR_W, BAR_Y, BAR_X + BAR_W, BAR_Y + BAR_H, C_FILL);
+  fmt_mv(sbuf, sizeof(sbuf), vdc_mv);
+  PrintSmallEx(LCD_WIDTH, SMALL_FONT_H * 3, POS_R, C_FILL, "Vdc:%s", sbuf);
 
-  // Заливка уровня
-  int fill_w = (int)((uint32_t)level_pct * (BAR_W - 2) / 100);
-  if (fill_w > 0)
-    FillRect(BAR_X + 1, BAR_Y + 1, fill_w, BAR_H - 1, C_FILL);
-
-  // Маркер зоны предклиппинга (~87%)
-  int warn_x = BAR_X + 1 + (BAR_W - 2) * 87 / 100;
-  PutPixel(warn_x, BAR_Y, C_FILL);
-  PutPixel(warn_x, BAR_Y + BAR_H, C_FILL);
-
-  // --- Текст: уровень% слева от бара ---
-  PrintSmallEx(BAR_X - 1, SMALL_FONT_H * 3, POS_R, C_FILL, "%3u%%", level_pct);
-
-  // --- Строка 4: DC-смещение | CLIP ---
-  if (dc_err >= 0)
-    PrintSmallEx(0, SMALL_FONT_H * 4, POS_L, C_FILL, "DC+%d", dc_err);
-  else
-    PrintSmallEx(0, SMALL_FONT_H * 4, POS_L, C_FILL, "DC%d", dc_err);
+  // Строка 4: диапазон Vmin..Vmax | CLIP
+  fmt_mv(sbuf, sizeof(sbuf), vmin_mv);
+  char sbuf2[10];
+  fmt_mv(sbuf2, sizeof(sbuf2), vmax_mv);
+  PrintSmallEx(0, SMALL_FONT_H * 4, POS_L, C_FILL, "%s~%s", sbuf, sbuf2);
 
   if (osc.clip_flag)
     PrintSmallEx(LCD_WIDTH, SMALL_FONT_H * 4, POS_R, C_FILL, "!CLIP!");
@@ -604,6 +627,7 @@ static void drawStatus(void) {
 // ---------------------------------------------------------------------------
 void OSC_render(void) {
   FillRect(0, OSC_TOP_MARGIN, LCD_WIDTH, OSC_GRAPH_H, C_CLEAR);
+  STATUSLINE_RenderRadioSettings();
 
   drawGrid();
 

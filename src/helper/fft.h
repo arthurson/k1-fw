@@ -1,26 +1,22 @@
 #pragma once
 #include <stdint.h>
 
-// ---------------------------------------------------------------------------
-// fft_int — 128-точечный FFT на целых числах (Q15, radix-2 DIT Cooley-Tukey)
-//
-// Вход:  re[128] — вещественная часть (Q15, диапазон -32768..32767)
-//        im[128] — мнимая часть (обычно нули для вещественного сигнала)
-// После вызова re/im содержат комплексный спектр.
-// Масштаб: каждая ступень делит на 2 (7 ступеней → /128).
-//   При входном сигнале ±A, пик спектра ≈ A/2.
-//
-// Магнитуды (bins 0..63):
-//   FFT_Magnitude(re, im, mag, 64)  →  mag[k] ≈ sqrt(re[k]^2+im[k]^2)
-//   (используется быстрое приближение без корня)
-// ---------------------------------------------------------------------------
+#define FFT_SIZE 128
 
-// Выполнить 128-точечный FFT in-place.
-// re, im — массивы 128 элементов int16_t.
-void FFT_128(int16_t *re, int16_t *im);
+void FFT_Forward(int16_t *re, int16_t *im);
+void FFT_Inverse(int16_t *re, int16_t *im);
 
-// Вычислить магнитуды bins[0..count-1] из комплексного спектра.
-// mag[k] = (3/4)*max(|re|,|im|) + (1/4)*min(|re|,|im|)  (≈0.97 точность)
-// Результат в те же единицы, что и вход FFT.
-void FFT_Magnitude(const int16_t *re, const int16_t *im,
-                   uint16_t *mag, int count);
+// Магнитуды
+void FFT_MagnitudeFast(const int16_t *re, const int16_t *im, uint16_t *mag,
+                       int count);
+void FFT_MagnitudeExact(const int16_t *re, const int16_t *im, uint16_t *mag,
+                        int count);
+
+// Утилиты
+int FFT_FindPeak(const uint16_t *mag, int start_bin, int end_bin,
+                 uint16_t *out_peak);
+float FFT_BinToFreq(int bin, int sample_rate_hz, int fft_size);
+void FFT_LogScale(const uint16_t *mag_in, uint8_t *mag_out, int bins_in,
+                  int bins_out, uint8_t min_db);
+void FFT_ApplyWindow(int16_t *re);
+void FFT_RemoveDC(int16_t *re);
