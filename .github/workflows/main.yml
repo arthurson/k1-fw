@@ -1,0 +1,31 @@
+name: Build K1-FW
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive  # 下載所有子模組
+
+      - name: Install ARM GCC
+        run: |
+          sudo apt update
+          sudo apt install gcc-arm-none-eabi make
+
+      - name: Build Firmware
+        run: |
+          make clean
+          make release
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: k1-fw-firmware
+          path: ./bin/firmware.bin
