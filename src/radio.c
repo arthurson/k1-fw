@@ -8,6 +8,7 @@
 #include "driver/bk1080.h"
 #include "driver/bk4819-regs.h"
 #include "driver/bk4829.h"
+#include "driver/gpio.h"
 #include "driver/lfs.h"
 #include "driver/si473x.h"
 #include "driver/st7565.h"
@@ -1289,6 +1290,7 @@ bool RADIO_StartTX(VFOContext *ctx) {
   BK4819_TuneTo(txF, true);
 
   BOARD_ToggleRed(gSettings.brightness > 1);
+  // GPIO_TurnOffBacklight();
   BK4819_PrepareTransmit();
 
   SYSTICK_DelayMs(10);
@@ -1313,12 +1315,15 @@ void RADIO_StopTX(VFOContext *ctx) {
 
   sendEOT();
 
-  ctx->tx_state.is_active = false;
-  BOARD_ToggleRed(false);
   BK4819_TurnsOffTones_TurnsOnRX();
 
   BK4819_SetupPowerAmplifier(0, 0);
   BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
+
+  ctx->tx_state.is_active = false;
+  BOARD_ToggleRed(false);
+  // GPIO_TurnOnBacklight();
+
   BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
 
   setupToneDetection(ctx);
@@ -1328,9 +1333,17 @@ void RADIO_StopTX(VFOContext *ctx) {
 
 void RADIO_ToggleTX(VFOContext *ctx, bool on) {
   if (on) {
+    // HACK
+    if (gCurrentApp != APP_MESSENGER) {
+      RF_ExitFsk();
+    }
     RADIO_StartTX(ctx);
   } else {
     RADIO_StopTX(ctx);
+    // HACK
+    if (gCurrentApp != APP_MESSENGER) {
+      RF_EnterFsk();
+    }
   }
 }
 

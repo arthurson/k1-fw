@@ -1435,7 +1435,7 @@ void BK4819_Init(void) {
   BK4819_WriteRegister(0x1C, 0x07C0);
   BK4819_WriteRegister(0x1D, 0xE555);
   BK4819_WriteRegister(0x1E, 0x4C58);
-  BK4819_WriteRegister(0x1F, 0xC65A);
+  BK4819_WriteRegister(0x1F, 0xC65A); // PLL CP 0:3
 
   BK4819_WriteRegister(BK4819_REG_3E, 0x94C6);
 

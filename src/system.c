@@ -1,5 +1,6 @@
 #include "system.h"
 #include "apps/apps.h"
+#include "apps/messenger.h"
 #include "board.h"
 #include "dcs.h"
 #include "driver/backlight.h"
@@ -310,6 +311,8 @@ bool checkInt() {
       // TODO: process
       TOAST_Push("FSK: %04X %04X %04X %04x", FSK_RXDATA[0], FSK_RXDATA[1],
                  FSK_RXDATA[2], FSK_RXDATA[3]);
+      gHasUnreadMessages = true;
+      MESSENGER_update();
     }
     return true;
   }

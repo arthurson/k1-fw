@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <string.h>
 
+extern bool gHasUnreadMessages;
+
 void MESSENGER_init(void);
 void MESSENGER_deinit(void);
 void MESSENGER_update(void);
