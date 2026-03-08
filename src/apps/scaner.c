@@ -144,8 +144,9 @@ static bool handleLongPressCont(KEY_Code_t key) {
 static bool handlePTTRelease(void) {
   // Переход в VFO если не заблокирован и есть активный сигнал
   if (gLastActiveLoot && !gSettings.keylock) {
+    uint32_t targetF = gLastActiveLoot->f; // сохраняем ДО
     APPS_run(APP_VFO1);
-    RADIO_SetParam(ctx, PARAM_FREQUENCY, gLastActiveLoot->f, true);
+    RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, true);
     RADIO_ApplySettings(ctx);
     RADIO_SaveCurrentVFO(gRadioState);
     return true;
