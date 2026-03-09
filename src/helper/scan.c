@@ -313,8 +313,6 @@ static void HandleModeSingle(void) {
   scan.measurement.glitch = vfo->msm.glitch;
   scan.measurement.snr = vfo->msm.snr;
 
-  RADIO_CheckAndSaveVFO(gRadioState);
-
   if (Now() - radioTimer >= SQL_DELAY) {
     RADIO_UpdateSquelch(gRadioState);
     SP_ShiftGraph(-1); // TODO: second buffer =)
@@ -328,6 +326,7 @@ static void HandleModeSingle(void) {
 // ============================================================================
 
 void SCAN_Check(void) {
+  RADIO_CheckAndSaveVFO(gRadioState);
   if (scan.mode == SCAN_MODE_NONE) {
     return;
   }
@@ -545,6 +544,17 @@ void SCAN_HandleInterrupt(uint16_t int_bits) {
     LogC(LOG_C_GREEN, "[INT] SQ -");
     // TOAST_Push("SQ -");
     gRedrawScreen = true;
+
+    if (scan.mode == SCAN_MODE_FREQUENCY || scan.mode == SCAN_MODE_CHANNEL) {
+      if (scan.state == SCAN_STATE_SWITCHING ||
+          scan.state == SCAN_STATE_DECIDING) {
+        scan.measurement.f = scan.currentF;
+        scan.measurement.open = true;
+        LOOT_Update(&scan.measurement);
+        ChangeState(SCAN_STATE_LISTENING);
+        LogC(LOG_C_YELLOW, "[INT] Fast open → LISTENING");
+      }
+    }
   }
 
   if (int_bits & BK4819_REG_02_MASK_SQUELCH_FOUND) {
