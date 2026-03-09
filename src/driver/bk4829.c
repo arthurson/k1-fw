@@ -1291,8 +1291,8 @@ uint8_t BK4819_GetSignalPower(void) {
 
 int16_t BK4819_GetAFCValue() {
   int16_t signedAfc = (int16_t)BK4819_ReadRegister(0x6D);
-  // * 3.3(3)
-  return (signedAfc * 10) / 3;
+  // Returns Hz, scale: 5/6 Hz per unit
+  return (signedAfc * 5) / 6;
 }
 
 uint8_t BK4819_GetSNR(void) { return BK4819_ReadRegister(0x61) & 0xFF; }

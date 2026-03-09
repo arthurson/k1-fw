@@ -363,10 +363,11 @@ static void renderExtraInfo(uint8_t BASE) {
   uint32_t rxF = RADIO_GetParam(ctx, PARAM_FREQUENCY);
   bool isTxFDifferent = (txF != rxF);
 
-  /* int16_t afcVal = BK4819_GetAFCValue();
+  // PrintSmallEx(14, 21, POS_L, C_FILL, "%u", BK4819_ReadRegister(0x6D));
+  int16_t afcVal = BK4819_GetAFCValue();
   if (afcVal != 0) {
-    PrintSmallEx(14, 21, POS_L, C_FILL, "%+d", BK4819_GetAFCValue() * 10);
-  } */
+    PrintSmallEx(14, 21, POS_L, C_FILL, "%+d", BK4819_GetAFCValue());
+  }
 
   if (gSettings.iAmPro) {
     PrintSmallEx(LCD_WIDTH - 1, BASE + 8 + 6, POS_R, C_FILL, "PRO");
