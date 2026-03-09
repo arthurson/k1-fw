@@ -178,6 +178,7 @@ void LOOT_UpdateEx(Loot *item, Measurement *msm) {
       msm->code = DCS_GetCtcssCode(ct);
       break;
     default:
+      msm->code = 255;
       break;
     }
   }
