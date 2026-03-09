@@ -24,7 +24,15 @@
 #include <stdint.h>
 
 static char String[16];
-static const Step liveStep = STEP_5_0kHz;
+
+static const char *graphMeasurementNames[] = {
+    [GRAPH_RSSI] = "RSSI",     //
+    [GRAPH_NOISE] = "Noise",   //
+    [GRAPH_GLITCH] = "Glitch", //
+    [GRAPH_SNR] = "SNR",       //
+    [GRAPH_APRS] = "APRS",     //
+    [GRAPH_TX] = "Audio",      //
+};
 
 static void updateBand(void) {
   uint32_t f = RADIO_GetParam(ctx, PARAM_FREQUENCY);
@@ -163,13 +171,18 @@ static bool handleRelease(KEY_Code_t key, Key_State_t state) {
     switch (key) {
     case KEY_1:
     case KEY_7:
-      // step
-      RADIO_IncDecParam(ctx, PARAM_STEP, key == KEY_1, true);
+      // sq
+      RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, key == KEY_1, true);
+      return true;
+    case KEY_2:
+    case KEY_8:
+      // sq
+      RADIO_IncDecParam(ctx, PARAM_BANDWIDTH, key == KEY_2, true);
       return true;
     case KEY_3:
     case KEY_9:
-      // sq
-      RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, key == KEY_3, true);
+      // step
+      RADIO_IncDecParam(ctx, PARAM_STEP, key == KEY_3, true);
       return true;
     case KEY_6:
       // mod
@@ -229,6 +242,8 @@ static bool handleRelease(KEY_Code_t key, Key_State_t state) {
   }
 }
 
+static GraphMeasurement _graphMeasurement;
+
 bool VFO1_key(KEY_Code_t key, Key_State_t state) {
   // return false;
   if (REGSMENU_Key(key, state)) {
@@ -247,7 +262,15 @@ bool VFO1_key(KEY_Code_t key, Key_State_t state) {
 
   // PTT
   if (key == KEY_PTT && !gIsNumNavInput) {
-    RADIO_ToggleTX(ctx, state != KEY_RELEASED);
+    const bool isTx = state != KEY_RELEASED;
+    if (isTx) {
+      _graphMeasurement = graphMeasurement;
+      graphMeasurement = GRAPH_TX;
+    } else {
+      graphMeasurement = _graphMeasurement;
+    }
+    RADIO_ToggleTX(ctx, isTx);
+
     return true;
   }
 
@@ -340,10 +363,11 @@ static void renderExtraInfo(uint8_t BASE) {
   uint32_t rxF = RADIO_GetParam(ctx, PARAM_FREQUENCY);
   bool isTxFDifferent = (txF != rxF);
 
-  /* int16_t afcVal = BK4819_GetAFCValue();
+  // PrintSmallEx(14, 21, POS_L, C_FILL, "%u", BK4819_ReadRegister(0x6D));
+  int16_t afcVal = BK4819_GetAFCValue();
   if (afcVal != 0) {
-    PrintSmallEx(14, 21, POS_L, C_FILL, "%+d", BK4819_GetAFCValue() * 10);
-  } */
+    PrintSmallEx(14, 21, POS_L, C_FILL, "%+d", BK4819_GetAFCValue());
+  }
 
   if (gSettings.iAmPro) {
     PrintSmallEx(LCD_WIDTH - 1, BASE + 8 + 6, POS_R, C_FILL, "PRO");
@@ -389,13 +413,7 @@ static void renderMonitorMode(uint8_t BASE) {
   SPECTRUM_Y = BASE + 2;
   SPECTRUM_H = LCD_HEIGHT - SPECTRUM_Y;
 
-  if (gSettings.showLevelInVFO) {
-    static char *graphMeasurementNames[] = {
-        [GRAPH_RSSI] = "RSSI",     [GRAPH_NOISE] = "Noise",
-        [GRAPH_GLITCH] = "Glitch", [GRAPH_SNR] = "SNR",
-        [GRAPH_APRS] = "APRS",
-    };
-
+  if (gSettings.showLevelInVFO || ctx->tx_state.is_active) {
     static const struct {
       uint16_t min;
       uint16_t max;
@@ -405,6 +423,7 @@ static void renderMonitorMode(uint8_t BASE) {
         [GRAPH_GLITCH] = {0, 255},
         [GRAPH_SNR] = {0, 30},
         [GRAPH_APRS] = {0, 4095},
+        [GRAPH_TX] = {0, UINT16_MAX},
         [GRAPH_COUNT] = {RSSI_MIN, RSSI_MAX},
     };
 
@@ -413,6 +432,12 @@ static void renderMonitorMode(uint8_t BASE) {
     PrintSmallEx(0, SPECTRUM_Y + 5, POS_L, C_FILL, "%s %+3u",
                  graphMeasurementNames[graphMeasurement],
                  SP_GetLastGraphValue());
+    if (ctx->tx_state.is_active) {
+      FillRect(0, LCD_HEIGHT - 8, 24, 8, C_CLEAR);
+      PrintMediumEx(1, LCD_HEIGHT - 1, POS_L, C_FILL, "%u%c",
+                    ctx->tx_state.power_level,
+                    ctx->tx_state.pa_enabled ? '+' : '-');
+    }
   } else {
     UI_RSSIBar(BASE + 1);
   }
@@ -435,7 +460,7 @@ void VFO1_render(void) {
     UI_BigFrequency(BASE, f);
   }
 
-  PrintMediumEx(LCD_WIDTH - 1, BASE - 12, POS_R, C_FILL, mod);
+  PrintMediumEx(LCD_WIDTH - 1, BASE - 9, POS_R, C_FILL, mod);
   renderChannelName(21, vfo->channel_index);
 
   const uint32_t step = StepFrequencyTable[ctx->step];
@@ -446,7 +471,7 @@ void VFO1_render(void) {
   renderExtraInfo(BASE);
   renderLootInfo();
 
-  if (gMonitorMode) {
+  if (gMonitorMode || ctx->tx_state.is_active) {
     renderMonitorMode(BASE);
   } else {
     if (vfo->msm.open || gSettings.alwaysRssi) {

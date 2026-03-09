@@ -432,8 +432,6 @@ uint16_t SP_GetLastGraphValue() { return rssiHistory[MAX_POINTS - 1]; }
 
 void SP_RenderGraph(uint16_t min, uint16_t max) {
   const VMinMax v = {
-      /* .vMin = 78,
-      .vMax = 274, */
       .vMin = min,
       .vMax = max,
   };
@@ -443,16 +441,30 @@ void SP_RenderGraph(uint16_t min, uint16_t max) {
 
   uint8_t oVal = ConvertDomain(rssiHistory[0], v.vMin, v.vMax, 0, SPECTRUM_H);
 
-  for (uint8_t i = 1; i < MAX_POINTS; ++i) {
-    uint8_t yVal = ConvertDomain(rssiHistory[i], v.vMin, v.vMax, 0, SPECTRUM_H);
-    DrawLine(i - 1, S_BOTTOM - oVal, i, S_BOTTOM - yVal, C_FILL);
-    oVal = yVal;
+  const uint8_t centerY = SPECTRUM_Y + SPECTRUM_H / 2;
+  if (graphMeasurement == GRAPH_TX) {
+
+    for (uint8_t i = 0; i < MAX_POINTS; ++i) {
+      /* Амплитуда: половина высоты области → бар вверх и вниз от центра */
+      uint8_t amp =
+          ConvertDomain(rssiHistory[i], v.vMin, v.vMax, 0, SPECTRUM_H / 2);
+
+      /* Заливка от (centerY - amp) до (centerY + amp) */
+      DrawVLine(i, centerY - amp, amp * 2 + 1, C_FILL);
+    }
+  } else {
+    for (uint8_t i = 1; i < MAX_POINTS; ++i) {
+      uint8_t yVal =
+          ConvertDomain(rssiHistory[i], v.vMin, v.vMax, 0, SPECTRUM_H);
+      DrawLine(i - 1, S_BOTTOM - oVal, i, S_BOTTOM - yVal, C_FILL);
+      oVal = yVal;
+    }
   }
   DrawHLine(0, SPECTRUM_Y, LCD_WIDTH, C_FILL);
   DrawHLine(0, S_BOTTOM, LCD_WIDTH, C_FILL);
 
   for (uint8_t x = 0; x < LCD_WIDTH; x += 4) {
-    DrawHLine(x, SPECTRUM_Y + SPECTRUM_H / 2, 2, C_FILL);
+    DrawHLine(x, centerY, 2, C_FILL);
   }
 }
 
@@ -475,6 +487,9 @@ void SP_AddGraphPoint(const Measurement *msm) {
     break;
   case GRAPH_APRS:
     v = BOARD_ADC_GetAPRS();
+    break;
+  case GRAPH_TX:
+    v = BK4819_GetVoiceAmplitude();
     break;
   case GRAPH_RSSI:
   case GRAPH_COUNT:
