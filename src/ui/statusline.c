@@ -1,5 +1,6 @@
 #include "statusline.h"
 #include "../apps/apps.h"
+#include "../apps/messenger.h"
 #include "../driver/battery.h"
 #include "../driver/py25q16.h"
 #include "../driver/si473x.h"
@@ -122,6 +123,10 @@ void STATUSLINE_render(void) {
   /* if (gCurrentApp == APP_CH_LIST || gCurrentApp == APP_LOOT_LIST) {
     UI_Scanlists(LCD_XCENTER - 13, 0, gSettings.currentScanlist);
   } */
+
+  if (gHasUnreadMessages) {
+    icons[idx++] = SYM_FOLDER;
+  }
 
   PrintSymbolsEx(LCD_WIDTH - 1 - 22, BASE_Y, POS_R, C_FILL, "%s", icons);
 

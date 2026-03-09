@@ -145,7 +145,7 @@ void APPS_run(AppType_t app) {
     if (!gRadioState) {
       // Один раз: выделяем структуру и настраиваем
       gRadioState = &radioState;
-      RADIO_InitState(gRadioState, 16);
+      RADIO_InitState(gRadioState, MAX_VFOS);
       KEYMAP_Load();
       RADIO_ToggleMultiwatch(gRadioState, gSettings.mWatch);
     }

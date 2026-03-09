@@ -69,7 +69,7 @@ void RF_EnterFsk() {
   RF_Write(0x5E, (64 << 3) | 4); // Almost empty=64, almost full=8
 
   // 9. Настройка девиации
-  BK4819_WriteRegister(0x40, 0x3000 + 1050); // 1050Hz deviation
+  // BK4819_WriteRegister(0x40, 0x3000 + 1050); // 1050Hz deviation
 
   // 10. Настройка синхрослова (по умолчанию, но явно задаем)
   RF_Write(0x5A, (FSK_SYNC_0 << 8) | FSK_SYNC_1);

@@ -303,21 +303,10 @@ static void HandleStateListening(void) {
 static uint32_t radioTimer = 0;
 static void HandleModeSingle(void) {
 
-  /* RADIO_UpdateSquelch(gRadioState);
-
-  scan.measurement.f = ctx->frequency;
   scan.measurement.rssi = vfo->msm.rssi;
   scan.measurement.noise = vfo->msm.noise;
   scan.measurement.glitch = vfo->msm.glitch;
   scan.measurement.snr = vfo->msm.snr;
-  scan.isOpen = vfo->is_open;
-  scan.measurement.open = scan.isOpen;
-
-  static bool lastOpen = false;
-  if (lastOpen != scan.isOpen) {
-    lastOpen = scan.isOpen;
-    gRedrawScreen = true;
-  } */
 
   RADIO_CheckAndSaveVFO(gRadioState);
 

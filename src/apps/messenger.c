@@ -20,13 +20,15 @@
 // Максимальное количество сообщений в истории
 #define MAX_MESSAGES 10
 
+bool gHasUnreadMessages;
+
 // Структура для сообщений
 typedef struct {
   bool incoming;
   char text[FSK_LEN * 2 + 1]; // Два байта на uint16_t + нуль-терминатор
 } Message_t;
 
-static Message_t messages[MAX_MESSAGES];
+static Message_t messages[MAX_MESSAGES] = {0};
 static uint8_t msgCount = 0;
 static uint8_t scrollOffset = 0; // Для скролла по истории
 //
@@ -90,9 +92,9 @@ void MESSENGER_init(void) {
   RADIO_ApplySettings(ctx);
 
   // Инициализация истории
-  memset(messages, 0, sizeof(messages));
+  /* memset(messages, 0, sizeof(messages));
   msgCount = 0;
-  scrollOffset = 0;
+  scrollOffset = 0; */
 
   // Подготовка для ввода текста
   gTextInputSize = FSK_LEN * 2; // Максимальная длина сообщения
@@ -169,6 +171,7 @@ bool MESSENGER_key(KEY_Code_t key, Key_State_t state) {
 }
 
 void MESSENGER_render(void) {
+  gHasUnreadMessages = false;
   // Заголовок
   PrintMediumEx(LCD_XCENTER, 14, POS_C, C_FILL, "%s",
                 RADIO_GetParamValueString(ctx, PARAM_FREQUENCY));
