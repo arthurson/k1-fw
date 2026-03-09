@@ -164,6 +164,22 @@ void LOOT_UpdateEx(Loot *item, Measurement *msm) {
   }
   if (msm->open) {
     item->lastTimeOpen = Now();
+    uint32_t cd = 0;
+    uint16_t ct = 0;
+    uint8_t Code = 0;
+    BK4819_CssScanResult_t res = BK4819_GetCxCSSScanResult(&cd, &ct);
+    msm->isCd = false;
+    switch (res) {
+    case BK4819_CSS_RESULT_CDCSS:
+      msm->code = DCS_GetCdcssCode(cd);
+      msm->isCd = true;
+      break;
+    case BK4819_CSS_RESULT_CTCSS:
+      msm->code = DCS_GetCtcssCode(ct);
+      break;
+    default:
+      break;
+    }
   }
   lastTimeCheck = Now();
   item->open = msm->open;

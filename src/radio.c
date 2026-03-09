@@ -370,12 +370,12 @@ static void setupToneDetection(VFOContext *ctx) {
     // Log("DCS on");
     BK4819_SetCDCSSCodeWord(
         DCS_GetGolayCodeWord(ctx->code.type, ctx->code.value));
-    TOAST_Push("CD ON");
+    // TOAST_Push("CD ON");
     break;
   case CODE_TYPE_CONTINUOUS_TONE:
     // Log("CTCSS on");
     BK4819_SetCTCSSFrequency(CTCSS_Options[ctx->code.value]);
-    TOAST_Push("CT ON");
+    // TOAST_Push("CT ON");
 
     break;
   default:

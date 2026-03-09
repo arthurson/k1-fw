@@ -589,24 +589,7 @@ void SCAN_HandleInterrupt(uint16_t int_bits) {
     sInt.sqOpen = true;
     RADIO_UnmuteAudioNow(gRadioState);
     LogC(LOG_C_GREEN, "[INT] CT/CD +");
-    // TOAST_Push("CT/CD +");
-
-    uint32_t cd = 0;
-    uint16_t ct = 0;
-    uint8_t Code = 0;
-    BK4819_CssScanResult_t res = BK4819_GetCxCSSScanResult(&cd, &ct);
-    vfo->msm.isCd = false;
-    switch (res) {
-    case BK4819_CSS_RESULT_CDCSS:
-      vfo->msm.code = DCS_GetCdcssCode(cd);
-      vfo->msm.isCd = true;
-      break;
-    case BK4819_CSS_RESULT_CTCSS:
-      vfo->msm.code = DCS_GetCtcssCode(ct);
-      break;
-    default:
-      break;
-    }
+    TOAST_Push("CT/CD +");
 
     LOOT_Update(&vfo->msm);
   }
