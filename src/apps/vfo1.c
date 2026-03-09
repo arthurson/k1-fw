@@ -163,13 +163,18 @@ static bool handleRelease(KEY_Code_t key, Key_State_t state) {
     switch (key) {
     case KEY_1:
     case KEY_7:
-      // step
-      RADIO_IncDecParam(ctx, PARAM_STEP, key == KEY_1, true);
+      // sq
+      RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, key == KEY_1, true);
+      return true;
+    case KEY_2:
+    case KEY_8:
+      // sq
+      RADIO_IncDecParam(ctx, PARAM_BANDWIDTH, key == KEY_2, true);
       return true;
     case KEY_3:
     case KEY_9:
-      // sq
-      RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, key == KEY_3, true);
+      // step
+      RADIO_IncDecParam(ctx, PARAM_STEP, key == KEY_3, true);
       return true;
     case KEY_6:
       // mod
