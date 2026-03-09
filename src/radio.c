@@ -2052,6 +2052,9 @@ void RADIO_FastSquelchUpdate() { vfo->is_open = RADIO_CheckSquelch(ctx); }
 
 // Немедленно заглушить аудио (без изменения состояния squelch-логики)
 void RADIO_MuteAudioNow(RadioState *state) {
+  if (gMonitorMode) {
+    return;
+  }
   ExtendedVFOContext *ev = &state->vfos[state->active_vfo_index];
   if (!ev->is_open)
     return; // уже тихо
