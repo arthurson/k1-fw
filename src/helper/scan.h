@@ -103,6 +103,10 @@ uint16_t SCAN_GetCommandIndex(void);
 uint16_t SCAN_GetCommandCount(void);
 uint16_t SCAN_GetSquelchLevel();
 
+void SCAN_HandleInterrupt(uint16_t int_bits);
+
+bool SCAN_IsSqOpen(void);
+
 extern const char *SCAN_MODE_NAMES[];
 extern const char *SCAN_STATE_NAMES[];
 

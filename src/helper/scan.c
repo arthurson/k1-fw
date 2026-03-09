@@ -9,6 +9,7 @@
 #include "../radio.h"
 #include "../settings.h"
 #include "../ui/spectrum.h"
+#include "../ui/toast.h"
 #include "bands.h"
 #include "measurements.h"
 #include <stdbool.h>
@@ -28,6 +29,12 @@ static ScanContext scan = {
     .currentVfoIndex = -1,
     .cmdCtx = NULL,
 };
+
+#define TAIL_HOLD_MS 250u
+
+static struct {
+  bool sqOpen; // последнее SQ-состояние из прерывания
+} sInt;
 
 static SCMD_Context cmdctx;
 
@@ -267,11 +274,11 @@ static void HandleStateDeciding(void) {
 }
 
 static void HandleStateListening(void) {
-  // Обновляем состояние squelch
-  RADIO_UpdateSquelch(gRadioState);
-  SP_AddPoint(&scan.measurement);
   bool wasOpen = scan.isOpen;
-  scan.isOpen = vfo->is_open;
+  scan.isOpen = sInt.sqOpen; // используем состояние из прерывания
+
+  SP_AddPoint(&scan.measurement);
+  RADIO_UpdateSquelch(gRadioState); // обновляем аппаратный squelch
 
   if (wasOpen != scan.isOpen) {
     gRedrawScreen = true;
@@ -280,14 +287,12 @@ static void HandleStateListening(void) {
   uint32_t elapsed = Now() - scan.stateEnteredAt;
 
   if (scan.isOpen) {
-    // Проверка таймаута прослушивания
     if (elapsed >= SCAN_TIMEOUTS[gSettings.sqOpenedTimeout]) {
       Log("[SCAN] Listen timeout");
       ChangeState(SCAN_STATE_SWITCHING);
       gRedrawScreen = true;
     }
   } else {
-    // Squelch закрылся - ждём таймаут закрытия
     if (elapsed >= SCAN_TIMEOUTS[gSettings.sqClosedTimeout]) {
       Log("[SCAN] Close timeout");
       ChangeState(SCAN_STATE_SWITCHING);
@@ -529,3 +534,52 @@ uint16_t SCAN_GetCommandCount(void) {
 }
 
 uint16_t SCAN_GetSquelchLevel() { return scan.squelchLevel; }
+
+// ============================================================================
+// Обработка прерываний BK4819
+// ============================================================================
+
+void SCAN_HandleInterrupt(uint16_t int_bits) {
+  if (int_bits & BK4819_REG_02_MASK_SQUELCH_LOST) {
+    sInt.sqOpen = true;
+    RADIO_UnmuteAudioNow(gRadioState);
+    LogC(LOG_C_GREEN, "[INT] SQ -");
+    // TOAST_Push("SQ -");
+    gRedrawScreen = true;
+  }
+
+  if (int_bits & BK4819_REG_02_MASK_SQUELCH_FOUND) {
+    sInt.sqOpen = false;
+    RADIO_MuteAudioNow(gRadioState);
+    LogC(LOG_C_GREEN, "[INT] SQ +");
+    // TOAST_Push("SQ +");
+    gRedrawScreen = true;
+  }
+
+  // --- Tail tone ---
+  if (int_bits & BK4819_REG_02_MASK_CxCSS_TAIL) {
+    sInt.sqOpen = false;
+    RADIO_MuteAudioNow(gRadioState);
+    LogC(LOG_C_GREEN, "[INT] TAIL");
+    // TOAST_Push("TAIL");
+  }
+
+  // --- CTCSS Lost ---
+  if ((int_bits & BK4819_REG_02_MASK_CTCSS_LOST) ||
+      (int_bits & BK4819_REG_02_MASK_CDCSS_LOST)) {
+    sInt.sqOpen = false;
+    RADIO_MuteAudioNow(gRadioState);
+    LogC(LOG_C_GREEN, "[INT] CT/CD -");
+    // TOAST_Push("CT/CD -");
+  }
+
+  // --- CTCSS Found ---
+  if ((int_bits & BK4819_REG_02_MASK_CTCSS_FOUND) ||
+      (int_bits & BK4819_REG_02_MASK_CDCSS_FOUND)) {
+    sInt.sqOpen = true;
+    RADIO_UnmuteAudioNow(gRadioState);
+    LogC(LOG_C_GREEN, "[INT] CT/CD +");
+    // TOAST_Push("CT/CD +");
+  }
+}
+bool SCAN_IsSqOpen(void) { return sInt.sqOpen; }

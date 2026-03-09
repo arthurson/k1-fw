@@ -353,7 +353,7 @@ static void setupToneDetection(VFOContext *ctx) {
                    BK4819_REG_3F_FSK_FIFO_ALMOST_FULL |
                    BK4819_REG_3F_FSK_RX_FINISHED;
 
-  // InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
+  InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
 
   if (gSettings.dtmfdecode) {
     BK4819_EnableDTMF();
@@ -1321,10 +1321,13 @@ void RADIO_StopTX(VFOContext *ctx) {
 
   sendEOT();
 
-  BK4819_TurnsOffTones_TurnsOnRX();
-
-  BK4819_SetupPowerAmplifier(0, 0);
+  // сперва отрубаем несучку
   BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
+  BK4819_SetupPowerAmplifier(0, 0);
+
+  // затем отрубаем тон, так в эфире последнее будет тон,
+  // а не несучка после отключения тона
+  BK4819_TurnsOffTones_TurnsOnRX();
 
   ctx->tx_state.is_active = false;
   BOARD_ToggleRed(false);
@@ -1710,17 +1713,16 @@ static bool isBroadcastReceiver(const VFOContext *ctx) {
   return (ctx->radio_type == RADIO_SI4732 || ctx->radio_type == RADIO_BK1080);
 }
 
-bool RADIO_CheckSquelch(VFOContext *ctx) {
-  if (ctx->tx_state.is_active) {
-    return false;
-  }
-  if (gMonitorMode) {
-    return true;
-  }
-  if (ctx->radio_type == RADIO_BK4819) {
-    return BK4819_IsSquelchOpen();
-  }
+#include "helper/scan.h"
 
+bool RADIO_CheckSquelch(VFOContext *ctx) {
+  if (ctx->tx_state.is_active)
+    return false;
+  if (gMonitorMode)
+    return true;
+  if (ctx->radio_type == RADIO_BK4819) {
+    return SCAN_IsSqOpen();
+  }
   return gShowAllRSSI ? RADIO_GetSNR(ctx) > ctx->squelch.value : true;
 }
 
@@ -2047,3 +2049,29 @@ const ExtendedVFOContext *RADIO_GetCurrentVFOConst(const RadioState *state) {
 }
 
 void RADIO_FastSquelchUpdate() { vfo->is_open = RADIO_CheckSquelch(ctx); }
+
+// Немедленно заглушить аудио (без изменения состояния squelch-логики)
+void RADIO_MuteAudioNow(RadioState *state) {
+  ExtendedVFOContext *ev = &state->vfos[state->active_vfo_index];
+  if (!ev->is_open)
+    return; // уже тихо
+  ev->is_open = false;
+  RXSW_SwitchTo(&state->rx_switch, &ev->context, false);
+  BOARD_ToggleGreen(false);
+  if (gSettings.backlightOnSquelch == BL_SQL_OPEN)
+    BACKLIGHT_TurnOff();
+  LogC(LOG_C_YELLOW, "[RADIO] Audio MUTED (tail/sq-)");
+}
+
+// Восстановить аудио (сигнал вернулся во время tail hold)
+void RADIO_UnmuteAudioNow(RadioState *state) {
+  ExtendedVFOContext *ev = &state->vfos[state->active_vfo_index];
+  if (ev->is_open)
+    return; // уже открыт
+  ev->is_open = true;
+  RXSW_SwitchTo(&state->rx_switch, &ev->context, true);
+  BOARD_ToggleGreen(true);
+  if (gSettings.backlightOnSquelch != BL_SQL_OFF)
+    BACKLIGHT_TurnOn();
+  LogC(LOG_C_YELLOW, "[RADIO] Audio RESTORED (sq+ during tail)");
+}

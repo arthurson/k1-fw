@@ -259,45 +259,17 @@ bool checkInt() {
     BK4819_WriteRegister(0x02, 0x0000);
     uint16_t int_bits = BK4819_ReadRegister(0x02);
 
-    if (int_bits & BK4819_REG_02_MASK_SQUELCH_LOST) {
-      LogC(LOG_C_GREEN, "SQ -");
-    }
-    if (int_bits & BK4819_REG_02_MASK_SQUELCH_FOUND) {
-      LogC(LOG_C_GREEN, "SQ +");
-    }
-    if (int_bits & BK4819_REG_02_MASK_FSK_RX_SYNC) {
+    // Основная обработка SQ/tail/CT/CD — делегируем в scan
+    SCAN_HandleInterrupt(int_bits);
+
+    // Остальные прерывания (FSK, DTMF) — только здесь
+    if (int_bits & BK4819_REG_02_MASK_FSK_RX_SYNC)
       LogC(LOG_C_GREEN, "FSK RX Sync");
-    }
-    if (int_bits & BK4819_REG_02_MASK_FSK_FIFO_ALMOST_FULL) {
+    if (int_bits & BK4819_REG_02_MASK_FSK_FIFO_ALMOST_FULL)
       LogC(LOG_C_GREEN, "FSK FIFO alm full");
-    }
-    if (int_bits & BK4819_REG_02_MASK_FSK_FIFO_ALMOST_EMPTY) {
-      LogC(LOG_C_GREEN, "FSK FIFO alm empt");
-    }
-    if (int_bits & BK4819_REG_02_MASK_FSK_RX_FINISHED) {
+    if (int_bits & BK4819_REG_02_MASK_FSK_RX_FINISHED)
       LogC(LOG_C_GREEN, "FSK RX finish");
-    }
-    if (int_bits & BK4819_REG_02_MASK_CxCSS_TAIL) {
-      LogC(LOG_C_GREEN, "TAIL tone");
-      // TOAST_Push("TAIL");
-    }
-    if (int_bits & BK4819_REG_02_MASK_CTCSS_FOUND) {
-      LogC(LOG_C_GREEN, "CT +");
-      uint32_t cd;
-      uint16_t ct;
-      BK4819_CssScanResult_t res = BK4819_GetCxCSSScanResult(&cd, &ct);
-      TOAST_Push("CT:%u.%u", CTCSS_Options[ct] / 10, CTCSS_Options[ct] % 10);
-    }
-    if (int_bits & BK4819_REG_02_MASK_CTCSS_LOST) {
-      LogC(LOG_C_GREEN, "CT -");
-    }
-    if (int_bits & BK4819_REG_02_MASK_CDCSS_FOUND) {
-      LogC(LOG_C_GREEN, "CD +");
-      TOAST_Push("CDCSS +");
-    }
-    if (int_bits & BK4819_REG_02_MASK_CDCSS_LOST) {
-      LogC(LOG_C_GREEN, "CD -");
-    }
+
     if (int_bits & BK4819_REG_02_MASK_DTMF_5TONE_FOUND) {
       const char c = DTMF_GetCharacter(BK4819_GetDTMF_5TONE_Code());
       if (dtmfIdx < ARRAY_SIZE(dtmfBuf) - 1) {
@@ -307,13 +279,14 @@ bool checkInt() {
       }
       LogC(LOG_C_GREEN, "DTMF %c", c);
     }
+
     if (RF_FskReceive(int_bits)) {
-      // TODO: process
       TOAST_Push("FSK: %04X %04X %04X %04x", FSK_RXDATA[0], FSK_RXDATA[1],
                  FSK_RXDATA[2], FSK_RXDATA[3]);
       gHasUnreadMessages = true;
       MESSENGER_update();
     }
+
     return true;
   }
   return false;
@@ -402,7 +375,7 @@ void SYS_Main() {
 
     appRender();
 
-    if (SCAN_GetMode() == SCAN_MODE_SINGLE && checkInt()) {
+    if (checkInt()) {
       continue;
     }
 

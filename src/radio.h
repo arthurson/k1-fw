@@ -10,7 +10,6 @@
 #define SQL_DELAY 50
 #define GARBAGE_FREQUENCY_MOD (13 * MHZ)
 
-
 extern const char *PARAM_NAMES[];
 extern const char *TX_STATE_NAMES[7];
 extern const char *FLT_BOUND_NAMES[2];
@@ -26,7 +25,6 @@ extern const uint16_t StepFrequencyTable[15];
 extern Band gCurrentBand;
 extern bool gShowAllRSSI;
 extern bool gMonitorMode;
-
 
 // New functions for multi-VFO and multiwatch support
 void RADIO_InitState(RadioState *state, uint8_t num_vfos);
@@ -86,6 +84,9 @@ uint8_t RADIO_GetGlitch(const VFOContext *ctx);
 
 void RADIO_FastSquelchUpdate();
 void RADIO_SlowRSSIUpdate();
+
+void RADIO_MuteAudioNow(RadioState *state);
+void RADIO_UnmuteAudioNow(RadioState *state);
 
 inline const char *RADIO_GetParamName(ParamType p);
 
