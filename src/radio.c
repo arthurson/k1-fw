@@ -386,7 +386,7 @@ static void setupToneDetection(VFOContext *ctx) {
   }
   BK4819_WriteRegister(BK4819_REG_3F, InterruptMask);
 
-  // RF_EnterFsk();
+  RF_EnterFsk();
 }
 
 static void sendEOT() {

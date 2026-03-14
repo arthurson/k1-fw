@@ -1593,16 +1593,16 @@ void BK4819_Init(void) {
 
   BK4819_WriteRegister(BK4819_REG_7B, 0x73DC);
 
-  BK4819_WriteRegister(BK4819_REG_48, 0x33A8);
-  /* BK4819_WriteRegister(BK4819_REG_48,
+  // BK4819_WriteRegister(BK4819_REG_48, 0x33A8);
+  BK4819_WriteRegister(BK4819_REG_48,
                        (0b1100 << 10)        // ?
                            | (0b111111 << 4) // GAIN2
                            | (0b0011 << 0)   // DAC GAIN AFTER G1 G2
-  ); */
+  );
 
-  BK4819_WriteRegister(0x40, 0x3516);
+  // BK4819_WriteRegister(0x40, 0x3516);
   // BK4819_WriteRegister(0x40, 0x34F0);
-  // RF_SetXtal(XTAL26M);
+  RF_SetXtal(XTAL26M);
 
   const uint8_t dtmf_coeffs[] = {111, 107, 103, 98, 80,  71,  58,  44,
                                  65,  55,  37,  23, 228, 203, 181, 159};
