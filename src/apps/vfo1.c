@@ -37,7 +37,7 @@ static const char *graphMeasurementNames[] = {
 static void updateBand(void) {
   uint32_t f = RADIO_GetParam(ctx, PARAM_FREQUENCY);
   // if (gCurrentBand.start == 0 && !BANDS_InRange(f, &gCurrentBand)) {
-    gCurrentBand = BANDS_ByFrequency(f);
+  gCurrentBand = BANDS_ByFrequency(f);
   // }
 }
 
@@ -441,7 +441,7 @@ static void renderMonitorMode(uint8_t BASE) {
                     ctx->tx_state.pa_enabled ? '+' : '-');
     }
   } else {
-    UI_RSSIBar(BASE + 1);
+    UI_RSSIBar(BASE + 1 + 6);
   }
 }
 
@@ -477,7 +477,7 @@ void VFO1_render(void) {
     renderMonitorMode(BASE);
   } else {
     if (vfo->msm.open || gSettings.alwaysRssi) {
-      UI_RSSIBar(BASE + 1);
+      UI_RSSIBar(BASE + 1 + 6);
     }
     if (ctx->tx_state.is_active) {
       UI_TxBar(BASE + 1);

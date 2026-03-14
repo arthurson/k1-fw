@@ -31,6 +31,7 @@ typedef struct {
   ScanState state;
   ScanMode mode;
   uint32_t stateEnteredAt;
+  uint32_t freqSetAt;
 
   // Диапазон сканирования
   uint32_t currentF;
@@ -64,6 +65,8 @@ typedef struct {
 
   // Multiwatch (для VFO сканирования)
   int8_t currentVfoIndex;
+
+  bool advanceOnSwitch;
 
 } ScanContext;
 
@@ -106,6 +109,7 @@ uint16_t SCAN_GetSquelchLevel();
 void SCAN_HandleInterrupt(uint16_t int_bits);
 
 bool SCAN_IsSqOpen(void);
+const char *SCAN_GetStateName();
 
 extern const char *SCAN_MODE_NAMES[];
 extern const char *SCAN_STATE_NAMES[];

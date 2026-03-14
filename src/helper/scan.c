@@ -31,8 +31,6 @@ static ScanContext scan = {
     .cmdCtx = NULL,
 };
 
-#define TAIL_HOLD_MS 250u
-
 static struct {
   bool sqOpen; // последнее SQ-состояние из прерывания
 } sInt;
@@ -190,15 +188,20 @@ static void HandleStateIdle(void) {
 }
 
 static void HandleStateSwitching(void) {
+  if (scan.advanceOnSwitch) {
+    scan.currentF += scan.stepF;
+    scan.advanceOnSwitch = false;
+  }
 
   if (scan.currentF > scan.endF) {
     HandleEndOfRange();
     return;
   }
 
-  RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
+  RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, true, false);
   RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
   RADIO_ApplySettings(ctx);
+  scan.freqSetAt = Now();
   SYSTICK_DelayUs(scan.scanDelayUs);
   scan.measurement.rssi = RADIO_GetRSSI(ctx);
   scan.measurement.f = scan.currentF;
@@ -243,9 +246,12 @@ static void HandleStateSwitching(void) {
 }
 
 static void HandleStateDeciding(void) {
-  if (Now() - scan.stateEnteredAt >= scan.sqlDelayMs) {
+  if (Now() - scan.freqSetAt >= scan.sqlDelayMs) {
+    // Log("Deciding check");
     // Аппаратная проверка squelch
+    SYSTICK_DelayMs(SQL_DELAY);
     RADIO_UpdateSquelch(gRadioState);
+
     scan.isOpen = vfo->is_open;
 
     scan.measurement.open = scan.isOpen;
@@ -269,6 +275,7 @@ static void HandleStateDeciding(void) {
     } else {
       // Ложное срабатывание - повышаем порог
       scan.squelchLevel++;
+      scan.advanceOnSwitch = true;
       ChangeState(SCAN_STATE_SWITCHING);
     }
   }
@@ -540,6 +547,7 @@ uint16_t SCAN_GetSquelchLevel() { return scan.squelchLevel; }
 
 void SCAN_HandleInterrupt(uint16_t int_bits) {
   if (ctx->code.type == 0 && (int_bits & BK4819_REG_02_MASK_SQUELCH_LOST)) {
+    Log("[SCAN] SQ -");
     sInt.sqOpen = true;
     RADIO_UnmuteAudioNow(gRadioState);
     gRedrawScreen = true;
@@ -557,6 +565,7 @@ void SCAN_HandleInterrupt(uint16_t int_bits) {
   }
 
   if (int_bits & BK4819_REG_02_MASK_SQUELCH_FOUND) {
+    Log("[SCAN] SQ +");
     sInt.sqOpen = false;
     RADIO_MuteAudioNow(gRadioState);
     gRedrawScreen = true;
@@ -580,3 +589,5 @@ void SCAN_HandleInterrupt(uint16_t int_bits) {
   }
 }
 bool SCAN_IsSqOpen(void) { return sInt.sqOpen; }
+
+const char *SCAN_GetStateName() { return SCAN_STATE_NAMES[scan.state]; }

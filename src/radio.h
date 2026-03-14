@@ -8,7 +8,6 @@
 #include <stdint.h>
 
 #define SQL_DELAY 50
-#define GARBAGE_FREQUENCY_MOD (13 * MHZ)
 
 extern const char *PARAM_NAMES[];
 extern const char *TX_STATE_NAMES[7];
