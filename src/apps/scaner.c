@@ -300,15 +300,6 @@ static void renderLootInfo(uint8_t y) {
   if (!gLastActiveLoot)
     return;
 
-  if (gLastActiveLoot->code != 255) {
-    if (gLastActiveLoot->isCd) {
-      PrintRTXCode(String, CODE_TYPE_DIGITAL, gLastActiveLoot->code);
-    } else {
-      PrintRTXCode(String, CODE_TYPE_CONTINUOUS_TONE, gLastActiveLoot->code);
-    }
-    PrintSmallEx(0, y, POS_L, C_FILL, "%s", String);
-  }
-
   UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, y, POS_C);
 
   const uint32_t ago = (Now() - gLastActiveLoot->lastTimeOpen) / 1000;
@@ -330,34 +321,32 @@ void SCANER_render(void) {
 
   ScanState state = SCAN_GetState();
 
-  switch (state) {
-  case SCAN_STATE_TUNING:
-    break;
+  LOOT_Sort(LOOT_SortByLastOpenTime, true);
+  uint8_t y = 15 + 7;
+  uint8_t cnt = 0;
 
-  case SCAN_STATE_CHECKING:
-    break;
+  for (int16_t i = LOOT_Size() - 1; i >= 0 && cnt < 4; --i) {
+    Loot *v = LOOT_Item(i);
+    const uint32_t ago = (Now() - v->lastTimeOpen) / 1000;
+    mhzToS(String, v->f);
 
-  case SCAN_STATE_LISTENING:
-    PrintMediumEx(0, 21, POS_L, C_FILL, "RX");
-    UI_BigFrequency(BASE, f);
-    UI_RSSIBar(BASE + 1);
-    break;
+    PrintMediumEx(0, y, POS_L, C_FILL, "%s %02u:%02u", String, ago / 60,
+                  ago % 60);
+
+    if (v->code != 255) {
+      if (v->isCd) {
+        PrintRTXCode(String, CODE_TYPE_DIGITAL, v->code);
+      } else {
+        PrintRTXCode(String, CODE_TYPE_CONTINUOUS_TONE, v->code);
+      }
+      PrintMediumEx(LCD_WIDTH - 1, y, POS_R, C_FILL, "%s", String);
+    }
+    cnt++;
+    y += 8;
   }
 
-  if (state != SCAN_STATE_LISTENING) {
-    LOOT_Sort(LOOT_SortByLastOpenTime, true);
-    uint8_t y = 18 + 8;
-    uint8_t cnt = 0;
-    for (int16_t i = LOOT_Size() - 1; i >= 0 && cnt < 4; --i) {
-      Loot *v = LOOT_Item(i);
-      const uint32_t ago = (Now() - v->lastTimeOpen) / 1000;
-      mhzToS(String, v->f);
-      PrintMediumEx(0, y, POS_L, C_FILL, "%c%s %u:%02u",
-                    gLastActiveLoot == v ? '>' : ' ', String, ago / 60,
-                    ago % 60);
-      cnt++;
-      y += 8;
-    }
+  if (state == SCAN_STATE_LISTENING) {
+    UI_RSSIBar(14 + 1);
   }
 
   if (gLastActiveLoot) {
