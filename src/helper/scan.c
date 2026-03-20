@@ -52,6 +52,13 @@ const char *SCAN_STATE_NAMES[] = {
 // Вспомогательные функции
 // ============================================================================
 
+static bool IsSkippable(uint32_t f) {
+  if (gSettings.skipGarbageFrequencies && f % 650000 == 0)
+    return true;
+  Loot *l = LOOT_Get(f);
+  return l && (l->blacklist || l->whitelist);
+}
+
 static void ChangeState(ScanState newState) {
   if (scan.state != newState) {
     scan.state = newState;
@@ -168,6 +175,10 @@ static void HandleStateIdle(void) {
 }
 
 static void HandleStateTuning(void) {
+  while (scan.currentF <= scan.endF && IsSkippable(scan.currentF)) {
+    scan.currentF += scan.stepF;
+  }
+
   if (scan.currentF > scan.endF) {
     HandleEndOfRange();
     return;
@@ -218,13 +229,7 @@ static void HandleStateTuning(void) {
     // Сигнала нет — на следующую частоту
     scan.measurement.open = false;
     SP_AddPoint(&scan.measurement);
-    Loot *loot;
-    do {
-      scan.currentF += scan.stepF;
-      loot = LOOT_Get(scan.currentF);
-    } while ((loot && (loot->blacklist || loot->whitelist)) ||
-             (scan.currentF % 650000 == 0));
-    // остаёмся в TUNING
+    scan.currentF += scan.stepF;
   }
 }
 
@@ -265,14 +270,14 @@ static void HandleStateChecking(void) {
 
 static void HandleStateListening(void) {
   // Если текущий loot был заблэклистен — сразу уходим
-  if (gLastActiveLoot &&
+  /* if (gLastActiveLoot &&
       (gLastActiveLoot->blacklist || gLastActiveLoot->whitelist)) {
     RADIO_MuteAudioNow(gRadioState);
     scan.currentF += scan.stepF;
     ChangeState(SCAN_STATE_TUNING);
     gRedrawScreen = true;
     return;
-  }
+  } */
 
   bool wasOpen = scan.isOpen;
   scan.isOpen = sqOpen; // состояние из прерывания
@@ -515,10 +520,17 @@ uint16_t SCAN_GetSquelchLevel(void) { return scan.squelchLevel; }
 
 void SCAN_HandleInterrupt(uint16_t int_bits) {
   if (ctx->code.type == 0 && (int_bits & BK4819_REG_02_MASK_SQUELCH_LOST)) {
+    gRedrawScreen = true;
     Log("[SCAN] SQ lost (open)");
+
+    if (IsSkippable(scan.currentF)) {
+      sqOpen = false;
+      // форсировать переход тоже не нужен
+      return;
+    }
+
     sqOpen = true;
     RADIO_UnmuteAudioNow(gRadioState);
-    gRedrawScreen = true;
 
     // Прерывание застало нас на переключении — форсируем LISTENING
     if (scan.mode == SCAN_MODE_FREQUENCY || scan.mode == SCAN_MODE_CHANNEL) {
