@@ -1,4 +1,5 @@
 #include "menu.h"
+#include "../driver/st7565.h"
 #include "../driver/uart.h"
 #include "../ui/graphics.h"
 #include "../ui/statusline.h"
@@ -126,7 +127,7 @@ static bool handleNumNav(KEY_Code_t key, Key_State_t state) {
   }
   if (!gIsNumNavInput &&
       ((state == KEY_LONG_PRESSED && key == KEY_STAR) ||
-       (state == KEY_RELEASED && key <= KEY_9))) {
+       (state == KEY_RELEASED && key >= KEY_0 && key <= KEY_9))) {
     NUMNAV_Init(active_menu->i, 0, active_menu->num_items - 1);
     gNumNavCallback = setMenuIndex;
     return true;
@@ -141,13 +142,23 @@ static bool handleNumNav(KEY_Code_t key, Key_State_t state) {
 }
 
 // Общая функция для обработки UP/DOWN навигации
-static bool handleUpDownNavigation(KEY_Code_t key, bool hasItems) {
+static bool handleUpDownNavigation(KEY_Code_t key, Key_State_t state, bool hasItems) {
   if (key != KEY_UP && key != KEY_DOWN) {
+    return false;
+  }
+
+  // Handle only PRESS and REPEAT (auto-repeat on hold), not RELEASE
+  if (state != KEY_PRESSED && state != KEY_LONG_PRESSED && state != KEY_LONG_PRESSED_CONT) {
     return false;
   }
 
   active_menu->i =
       IncDecU(active_menu->i, 0, active_menu->num_items, key == KEY_DOWN);
+
+  // Force redraw for menus without items (like keymap submenu)
+  if (!hasItems) {
+    gRedrawScreen = true;
+  }
 
   if (!hasItems && active_menu->action) {
     active_menu->action(active_menu->i, key, KEY_RELEASED);
@@ -163,13 +174,11 @@ bool MENU_HandleInput(KEY_Code_t key, Key_State_t state) {
     return false;
   }
 
-  // Log("[MENU] Key");
-
   const bool hasItems = (active_menu->items != NULL);
 
-  // Общая обработка UP/DOWN для обоих типов меню
-  if (state == KEY_RELEASED || state == KEY_LONG_PRESSED_CONT) {
-    if (handleUpDownNavigation(key, hasItems)) {
+  // UP/DOWN навигация - обрабатываем только PRESS и REPEAT
+  if (key == KEY_UP || key == KEY_DOWN) {
+    if (handleUpDownNavigation(key, state, hasItems)) {
       return true;
     }
   }

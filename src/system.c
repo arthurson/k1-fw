@@ -21,7 +21,9 @@
 #include "helper/bands.h"
 #include "helper/fsk2.h"
 #include "helper/keymap.h"
+#include "helper/lootlist.h"
 #include "helper/menu.h"
+#include "helper/measurements.h"
 #include "helper/scan.h"
 #include "helper/screenshot.h"
 #include "helper/storage.h"
@@ -33,9 +35,13 @@
 #include "ui/graphics.h"
 #include "ui/keymap.h"
 #include "ui/lootlist.h"
+#include "ui/spectrum.h"
 #include "ui/statusline.h"
 #include "ui/textinput.h"
 #include "ui/toast.h"
+#include "helper/regs-menu.h"
+#include "helper/vfomenu.h"
+#include "helper/scan.h"
 #include <string.h>
 
 static uint32_t secondTimer;
@@ -131,11 +137,304 @@ static bool checkKeylock(KEY_State_t state, KEY_Code_t key) {
 }
 
 static bool keyAction(AppAction_t act) {
-  if (act.action == KA_FLASHLIGHT) {
+  VFOContext *ctx = &RADIO_GetCurrentVFO(gRadioState)->context;
+
+  switch (act.action) {
+  // ========================================================================
+  // Flashlight & Basic Actions
+  // ========================================================================
+  case KA_FLASHLIGHT:
     BOARD_FlashlightToggle();
     return true;
+
+  // ========================================================================
+  // Radio Parameter Actions
+  // ========================================================================
+  case KA_STEP:
+    RADIO_IncDecParam(ctx, PARAM_STEP, true, true);
+    return true;
+
+  case KA_BW:
+    RADIO_IncDecParam(ctx, PARAM_BANDWIDTH, true, true);
+    return true;
+
+  case KA_GAIN:
+    RADIO_IncDecParam(ctx, PARAM_GAIN, true, true);
+    return true;
+
+  case KA_POWER:
+    RADIO_IncDecParam(ctx, PARAM_POWER, true, true);
+    return true;
+
+  case KA_MODULATION:
+    RADIO_IncDecParam(ctx, PARAM_MODULATION, true, true);
+    return true;
+
+  case KA_SQUELCH_UP:
+    RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, true, true);
+    return true;
+
+  case KA_SQUELCH_DOWN:
+    RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, false, true);
+    return true;
+
+  case KA_OFFSET_UP:
+    RADIO_IncDecParam(ctx, PARAM_TX_OFFSET, true, true);
+    return true;
+
+  case KA_OFFSET_DOWN:
+    RADIO_IncDecParam(ctx, PARAM_TX_OFFSET, false, true);
+    return true;
+
+  case KA_OFFSET_DIR:
+    RADIO_IncDecParam(ctx, PARAM_TX_OFFSET_DIR, true, true);
+    return true;
+
+  case KA_RADIO:
+    RADIO_IncDecParam(ctx, PARAM_RADIO, true, true);
+    return true;
+
+  case KA_FILTER:
+    RADIO_IncDecParam(ctx, PARAM_FILTER, true, true);
+    return true;
+
+  case KA_AFC:
+    RADIO_IncDecParam(ctx, PARAM_AFC, true, true);
+    return true;
+
+  case KA_DEV:
+    RADIO_IncDecParam(ctx, PARAM_DEV, true, true);
+    return true;
+
+  case KA_XTAL:
+    RADIO_IncDecParam(ctx, PARAM_XTAL, true, true);
+    return true;
+
+  case KA_SCRAMBLER:
+    RADIO_IncDecParam(ctx, PARAM_SCRAMBLER, true, true);
+    return true;
+
+  case KA_VOLUME:
+    RADIO_IncDecParam(ctx, PARAM_VOLUME, true, true);
+    return true;
+
+  // ========================================================================
+  // Display & UI Actions
+  // ========================================================================
+  case KA_RSSI:
+    gShowAllRSSI = !gShowAllRSSI;
+    return true;
+
+  case KA_RSSI_GRAPH:
+    gSettings.showLevelInVFO = !gSettings.showLevelInVFO;
+    SETTINGS_DelayedSave();
+    return true;
+
+  case KA_ALWAYS_RSSI:
+    gSettings.alwaysRssi = !gSettings.alwaysRssi;
+    SETTINGS_DelayedSave();
+    return true;
+
+  case KA_GRAPH_UNIT:
+    SP_NextGraphUnit(true);
+    return true;
+
+  case KA_LEVEL_DISPLAY:
+    gSettings.showLevelInVFO = !gSettings.showLevelInVFO;
+    SETTINGS_DelayedSave();
+    return true;
+
+  case KA_VFO_MENU:
+    VFOMENU_Key(KEY_F, KEY_RELEASED);
+    return true;
+
+  case KA_RADIO_SETTINGS:
+    REGSMENU_Key(KEY_0, KEY_RELEASED);
+    return true;
+
+  case KA_PRO_MODE:
+    gSettings.iAmPro = !gSettings.iAmPro;
+    SETTINGS_Save();
+    return true;
+
+  // ========================================================================
+  // Monitor & TX Actions
+  // ========================================================================
+  case KA_MONI:
+    gMonitorMode = !gMonitorMode;
+    return true;
+
+  case KA_TX:
+    RADIO_ToggleTX(ctx, true);
+    return true;
+
+  case KA_PTT:
+    RADIO_ToggleTX(ctx, !ctx->tx_state.is_active);
+    return true;
+
+  case KA_VOX:
+    // VOX toggle - implement if needed
+    return true;
+
+  // ========================================================================
+  // Frequency & Channel Actions
+  // ========================================================================
+  case KA_FREQ_INPUT:
+    FINPUT_setup(0, BK4819_F_MAX, UNIT_MHZ, false);
+    FINPUT_Show(NULL);
+    return true;
+
+  case KA_VFO_MODE: {
+    uint8_t vfoN = RADIO_GetCurrentVFONumber(gRadioState);
+    RADIO_SaveCurrentVFO(gRadioState);
+    RADIO_ToggleVFOMode(gRadioState, vfoN);
+    return true;
   }
-  return false;
+
+  case KA_NEXT_CH:
+    RADIO_NextChannel(true);
+    return true;
+
+  case KA_PREV_CH:
+    RADIO_NextChannel(false);
+    return true;
+
+  case KA_NEXT_VFO: {
+    uint8_t vfoN = RADIO_GetCurrentVFONumber(gRadioState);
+    RADIO_SaveCurrentVFO(gRadioState);
+    RADIO_SwitchVFO(gRadioState, IncDecU(vfoN, 0, gRadioState->num_vfos, true));
+    return true;
+  }
+
+  case KA_TUNE_TO_LOOT:
+    if (gLastActiveLoot) {
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, gLastActiveLoot->f, true);
+      RADIO_ApplySettings(ctx);
+    }
+    return true;
+
+  // ========================================================================
+  // Scan & List Actions
+  // ========================================================================
+  case KA_LOOTLIST:
+    LOOTLIST_init();
+    gLootlistActive = true;
+    return true;
+
+  case KA_CH_LIST:
+    CHLIST_init();
+    gChlistActive = true;
+    return true;
+
+  case KA_MULTIWATCH:
+    RADIO_ToggleMultiwatch(gRadioState, !gRadioState->multiwatch_enabled);
+    return true;
+
+  case KA_BLACKLIST_LAST:
+    LOOT_BlacklistLast();
+    return true;
+
+  case KA_WHITELIST_LAST:
+    LOOT_WhitelistLast();
+    return true;
+
+  case KA_NEXT_BLACKLIST:
+    SCAN_NextBlacklist();
+    return true;
+
+  case KA_NEXT_WHITELIST:
+    SCAN_NextWhitelist();
+    return true;
+
+  case KA_CLEAR_LOOT:
+    LOOT_Clear();
+    return true;
+
+  case KA_SAVE_LOOT_CH:
+    // Save loot to channels - implement if needed
+    return true;
+
+  // ========================================================================
+  // Band & Range Actions
+  // ========================================================================
+  case KA_BANDS:
+    // Open bands menu - implement if needed
+    return true;
+
+  case KA_CHANNELS:
+    // Open channels menu - implement if needed
+    return true;
+
+  case KA_BAND_UP:
+  case KA_BAND_DOWN:
+    // Band shift - scanner specific
+    return true;
+
+  case KA_ZOOM_IN:
+  case KA_ZOOM_OUT:
+    // Range zoom - scanner specific
+    return true;
+
+  case KA_RANGE_INPUT:
+    // Range input - scanner specific
+    return true;
+
+  // ========================================================================
+  // Application Control
+  // ========================================================================
+  case KA_APP_VFO1:
+    APPS_run(APP_VFO1);
+    return true;
+
+  case KA_APP_SCAN:
+    APPS_run(APP_SCANER);
+    return true;
+
+  case KA_APP_FC:
+    APPS_run(APP_FC);
+    return true;
+
+  case KA_APP_SETTINGS:
+    APPS_run(APP_SETTINGS);
+    return true;
+
+  case KA_APP_FILES:
+    APPS_run(APP_FILES);
+    return true;
+
+  case KA_APP_OSC:
+    APPS_run(APP_OSC);
+    return true;
+
+  case KA_EXIT_APP:
+    APPS_exit();
+    return true;
+
+  // ========================================================================
+  // Fast Menu & Settings
+  // ========================================================================
+  case KA_FASTMENU1:
+  case KA_FASTMENU2:
+    // Fast menu slots - implement if needed
+    return true;
+
+  case KA_CH_SETTING:
+    APPS_run(APP_SETTINGS);
+    return true;
+
+  case KA_BL:
+  case KA_BL_MAX:
+  case KA_BL_MIN:
+  case KA_CONTRAST:
+  case KA_BEEP:
+  case KA_INVERT_BTNS:
+    // Settings shortcuts - implement if needed
+    return true;
+
+  case KA_NONE:
+  default:
+    return false;
+  }
 }
 
 #define HANDLE_OVERLAY(active, fn, k, s)                                       \
