@@ -291,7 +291,6 @@ void LOOTLIST_render(void) { MENU_Render(); }
 
 void LOOTLIST_init(void) {
   SCAN_SetMode(SCAN_MODE_SINGLE);
-  // SCAN_Init(false);
   initMenu();
   sortType = SORT_F;
   sort(SORT_LOT);

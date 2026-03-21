@@ -52,6 +52,7 @@ typedef struct {
   uint32_t scanCycles;
   uint32_t currentCps;
   uint32_t lastCpsTime;
+  uint32_t radioTimer;
   uint8_t idleCycles; // Циклы без открытого squelch (для авто-снижения порога)
 
   // Командный режим
@@ -63,7 +64,7 @@ typedef struct {
 // API
 // ============================================================================
 
-void SCAN_Init(bool multiband);
+void SCAN_Init(void);
 void SCAN_SetMode(ScanMode mode);
 ScanMode SCAN_GetMode(void);
 
@@ -76,10 +77,10 @@ bool SCAN_IsCommandMode(void);
 void SCAN_CommandForceNext(void);
 
 // Управление диапазоном
-void SCAN_setBand(Band b);
-void SCAN_setStartF(uint32_t f);
-void SCAN_setEndF(uint32_t f);
-void SCAN_setRange(uint32_t fs, uint32_t fe);
+void SCAN_SetBand(Band b);
+void SCAN_SetStartF(uint32_t f);
+void SCAN_SetEndF(uint32_t f);
+void SCAN_SetRange(uint32_t fs, uint32_t fe);
 
 // Действия
 void SCAN_Next(void);

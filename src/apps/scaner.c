@@ -32,7 +32,7 @@ static uint32_t lastFChangeMs = 0;
 static void setRange(uint32_t fs, uint32_t fe) {
   gCurrentBand.step = RADIO_GetParam(ctx, PARAM_STEP);
   BANDS_RangeClear();
-  SCAN_setRange(fs, fe);
+  SCAN_SetRange(fs, fe);
   BANDS_RangePush(gCurrentBand);
 }
 
@@ -69,7 +69,7 @@ void SCANER_init(void) {
   SCAN_SetDelay(1200);
 
   SCAN_SetMode(SCAN_MODE_FREQUENCY);
-  SCAN_Init(false);
+  SCAN_Init();
 }
 
 ScanState oldScanState;
@@ -95,7 +95,7 @@ static void shiftBand(bool up) {
     }
   }
   gCurrentBand = *b;
-  SCAN_setBand(gCurrentBand);
+  SCAN_SetBand(gCurrentBand);
 }
 
 static bool handleLongPress(KEY_Code_t key) {
@@ -110,7 +110,7 @@ static bool handleLongPress(KEY_Code_t key) {
     _b.start = gLastActiveLoot->f - step * 64;
     _b.end = _b.start + step * 128;
     BANDS_RangePush(_b);
-    SCAN_setBand(*BANDS_RangePeek());
+    SCAN_SetBand(*BANDS_RangePeek());
     return true;
 
   case KEY_PTT:
@@ -145,14 +145,14 @@ static bool handleRepeatableKeys(KEY_Code_t key) {
     }
     gCurrentBand.end =
         RoundToStep(gCurrentBand.end, StepFrequencyTable[gCurrentBand.step]);
-    SCAN_setBand(gCurrentBand);
+    SCAN_SetBand(gCurrentBand);
     return true;
 
   case KEY_3:
   case KEY_9:
     RADIO_IncDecParam(ctx, PARAM_STEP, key == KEY_3, false);
     gCurrentBand.step = RADIO_GetParam(ctx, PARAM_STEP);
-    SCAN_setBand(gCurrentBand);
+    SCAN_SetBand(gCurrentBand);
     return true;
 
   case KEY_UP:
@@ -217,7 +217,7 @@ static bool handleRelease(KEY_Code_t key) {
     _b.end = center + step * 32;
     BANDS_RangePush(_b);
     gCurrentBand = *BANDS_RangePeek();
-    SCAN_setBand(gCurrentBand);
+    SCAN_SetBand(gCurrentBand);
     return true;
   }
 
@@ -225,7 +225,7 @@ static bool handleRelease(KEY_Code_t key) {
     // Zoom out: назад к предыдущему диапазону
     BANDS_RangePop();
     gCurrentBand = *BANDS_RangePeek();
-    SCAN_setBand(gCurrentBand);
+    SCAN_SetBand(gCurrentBand);
     return true;
 
   case KEY_PTT:
