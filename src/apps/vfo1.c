@@ -446,7 +446,7 @@ static void renderMonitorMode(uint8_t BASE) {
 }
 
 void VFO1_render(void) {
-  const uint8_t BASE = 40;
+  const uint8_t BASE = 39;
 
   renderStatusLine();
 

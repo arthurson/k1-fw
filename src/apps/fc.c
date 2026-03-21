@@ -2,6 +2,8 @@
 #include "../dcs.h"
 #include "../driver/systick.h"
 #include "../driver/uart.h"
+#include "../helper/lootlist.h"
+#include "../helper/regs-menu.h"
 #include "../helper/scan.h"
 #include "../radio.h"
 #include "../settings.h"
@@ -12,8 +14,6 @@
 
 static const uint8_t REQUIRED_FREQUENCY_HITS = 2;
 static const uint8_t FILTER_SWITCH_INTERVAL = REQUIRED_FREQUENCY_HITS;
-
-static Loot *gLastActiveLoot;
 
 static const char *FILTER_NAMES[] = {
     [FILTER_OFF] = "ALL",
@@ -35,6 +35,7 @@ static uint8_t filterSwitchCounter = 0;
 static uint16_t hz = 0x244;
 
 static uint32_t fcTimeuot;
+static uint32_t fcListenTimer;
 
 static void enableScan() {
   // Log("FC enable");
@@ -119,6 +120,7 @@ void FC_update(void) {
         // Log("FC hit! Tuning");
         disableScan();
         RADIO_SetParam(ctx, PARAM_FREQUENCY, currentFrequency, false);
+        RADIO_ApplySettings(ctx);
         frequencyHits = 0;
       } else {
         disableScan();
@@ -132,21 +134,22 @@ void FC_update(void) {
     }
     SetTimeout(&fcTimeuot, 200 << gSettings.fcTime);
   } else {
-    if (!vfo->is_open) {
-      SYSTICK_DelayMs(SQL_DELAY);
-    }
-    // Log("FC checklisten");
-    RADIO_UpdateSquelch(gRadioState);
-
-    if (vfo->is_open) {
-      gRedrawScreen = true;
-    } else {
-      enableScan();
+    if (Now() - fcListenTimer >= SQL_DELAY) {
+      RADIO_UpdateSquelch(gRadioState);
+      if (vfo->is_open) {
+        gRedrawScreen = true;
+      } else {
+        enableScan();
+      }
+      fcListenTimer = Now();
     }
   }
 }
 
 bool FC_key(KEY_Code_t key, Key_State_t state) {
+  if (REGSMENU_Key(key, state)) {
+    return true;
+  }
   if (state == KEY_RELEASED || state == KEY_LONG_PRESSED_CONT) {
     switch (key) {
     case KEY_5:
@@ -170,20 +173,21 @@ bool FC_key(KEY_Code_t key, Key_State_t state) {
     case KEY_3:
     case KEY_9:
       RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, key == KEY_3, true);
+      RADIO_ApplySettings(ctx);
       break;
     case KEY_STAR:
       // APPS_run(APP_LOOT_LIST);
       return true;
     case KEY_SIDE1:
-      // LOOT_BlacklistLast();
+      LOOT_BlacklistLast();
       return true;
     case KEY_SIDE2:
-      // LOOT_WhitelistLast();
+      LOOT_WhitelistLast();
       return true;
     case KEY_F:
       switchFilter();
       return true;
-    case KEY_0:
+    case KEY_6:
       bandAutoSwitch = !bandAutoSwitch;
       return true;
     case KEY_PTT:
@@ -221,4 +225,6 @@ void FC_render() {
       PrintSmallEx(LCD_WIDTH, 40 + 8 + 6, POS_R, C_FILL, "%s", String);
     }
   }
+
+  REGSMENU_Draw();
 }

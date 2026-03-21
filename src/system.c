@@ -56,9 +56,9 @@ static void appRender() {
     return;
   }
 
-  /* if (Now() - gLastRender < 8) {
+  if (Now() - gLastRender < 32) {
     return;
-  } */
+  }
 
   gRedrawScreen = false;
 
@@ -99,6 +99,11 @@ static void appRender() {
   /* PrintSmallEx(LCD_WIDTH - 24, 4, POS_R, C_FILL, "FPS: %u", gCurrentFPS);
   PrintSmallEx(LCD_XCENTER, 32, POS_C, C_FILL, "A %u S %u T %u", time_apps,
                time_status, time_toast); */
+
+  /* for (uint8_t y = 7; y < LCD_HEIGHT; y += 8) {
+    DrawHLine(0, y, LCD_WIDTH, C_FILL);
+  } */
+
   ST7565_Blit();
 }
 

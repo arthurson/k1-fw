@@ -353,9 +353,9 @@ void SCANER_render(void) {
     UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, 14, POS_C);
   }
 
-  renderScanProgress(LCD_HEIGHT - 6 - 3, f, state);
-  renderBandBounds(LCD_HEIGHT - 1);
-  PrintSmallEx(LCD_XCENTER, LCD_HEIGHT - 1, POS_C, C_FILL, "%s",
+  renderScanProgress(LCD_HEIGHT - 6 - 4, f, state);
+  renderBandBounds(LCD_HEIGHT - 2);
+  PrintSmallEx(LCD_XCENTER, LCD_HEIGHT - 2, POS_C, C_FILL, "%s",
                RADIO_GetParamValueString(ctx, PARAM_FREQUENCY));
 
   REGSMENU_Draw();
