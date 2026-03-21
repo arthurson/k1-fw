@@ -43,6 +43,7 @@ static uint8_t DEAD_BUF[] = {0xDE, 0xAD};
 static uint32_t secondTimer;
 static uint32_t radioTimer;
 static uint32_t toastTimer;
+static uint32_t backlightTimer;
 static uint32_t appsKeyboardTimer;
 
 static uint32_t gFrameCount = 0;
@@ -370,8 +371,12 @@ void SYS_Main() {
 
     // common: render 2 times per second minimum
     if (Now() - gLastRender >= 500) {
-      BACKLIGHT_UpdateTimer();
       gRedrawScreen = true;
+    }
+
+    if (Now() - backlightTimer >= 500) {
+      BACKLIGHT_UpdateTimer();
+      backlightTimer = Now();
     }
 
     if (Now() - secondTimer >= 1000) {

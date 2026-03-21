@@ -1531,6 +1531,67 @@ static void RF_SetAfResponse_RX(uint8_t f3k, uint8_t db) {
     break;
   }
 }
+void RF_SetRxEqualizer(int8_t db_low, int8_t db_high) {
+  /* --- 300 Гц → REG 0x54, 0x55 --- */
+  if (db_low >= 4) {
+    BK4819_WriteRegister(0x54, 0x8d8f);
+    BK4819_WriteRegister(0x55, 0x3359);
+  } /* +4dB */
+  else if (db_low == 3) {
+    BK4819_WriteRegister(0x54, 0x8ed8);
+    BK4819_WriteRegister(0x55, 0x3232);
+  } /* +3dB */
+  else if (db_low == 2) {
+    BK4819_WriteRegister(0x54, 0x8f46);
+    BK4819_WriteRegister(0x55, 0x31e7);
+  } /* +2dB */
+  else if (db_low == 1) {
+    BK4819_WriteRegister(0x54, 0x8f90);
+    BK4819_WriteRegister(0x55, 0x31f3);
+  } /* +1dB */
+  else if (db_low == 0) {
+    BK4819_WriteRegister(0x54, 0x9009);
+    BK4819_WriteRegister(0x55, 0x31a9);
+  } /*  0dB */
+  else if (db_low == -1) {
+    BK4819_WriteRegister(0x54, 0x91c1);
+    BK4819_WriteRegister(0x55, 0x3040);
+  } /* -1dB */
+  else if (db_low == -2) {
+    BK4819_WriteRegister(0x54, 0x920b);
+    BK4819_WriteRegister(0x55, 0x3010);
+  } /* -2dB */
+  else {
+    BK4819_WriteRegister(0x54, 0x935a);
+    BK4819_WriteRegister(0x55, 0x2eff);
+  } /* -3dB */
+
+  /* --- 3 кГц → REG 0x75 --- */
+  if (db_high >= 4) {
+    BK4819_WriteRegister(0x75, 0xcc35);
+  } /* +4dB */
+  else if (db_high == 3) {
+    BK4819_WriteRegister(0x75, 0xd42d);
+  } /* +3dB */
+  else if (db_high == 2) {
+    BK4819_WriteRegister(0x75, 0xdf22);
+  } /* +2dB */
+  else if (db_high == 1) {
+    BK4819_WriteRegister(0x75, 0xe61c);
+  } /* +1dB */
+  else if (db_high == 0) {
+    BK4819_WriteRegister(0x75, 0xf50b);
+  } /*  0dB */
+  else if (db_high == -1) {
+    BK4819_WriteRegister(0x75, 0xfa02);
+  } /* -1dB */
+  else if (db_high == -2) {
+    BK4819_WriteRegister(0x75, 0xf200);
+  } /* -2dB */
+  else {
+    BK4819_WriteRegister(0x75, 0xda00);
+  } /* -4dB (-3dB отсутствует в драйвере) */
+}
 
 // ============================================================================
 // Initialization
@@ -1597,8 +1658,9 @@ void BK4819_Init(void) {
   BK4819_WriteRegister(0x2F, 0x9890); // audio tx limit, emph rx gain
   BK4819_WriteRegister(0x53, 0x2028); // audio alc tc
 
-  RF_SetAfResponse_RX(1, ADD1); // +1dB @ 3kHz — чуть ярче
-  RF_SetAfResponse_RX(0, SUB1); // -1dB @ 300Hz — меньше баса
+  /* RF_SetAfResponse_RX(1, ADD4); // +1dB @ 3kHz — чуть ярче
+  RF_SetAfResponse_RX(0, SUB3); // -1dB @ 300Hz — меньше баса */
+  RF_SetRxEqualizer(-3, +4);
 
   RF_SetAfResponse_TX(1, ADD2); // согласные, улучшает разборчивость
   RF_SetAfResponse_TX(0, SUB1); // -1dB @ 300Hz Обрезает гул, бубнение
