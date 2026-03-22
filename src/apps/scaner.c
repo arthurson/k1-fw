@@ -237,7 +237,7 @@ static bool handleRelease(KEY_Code_t key) {
 }
 
 bool SCANER_key(KEY_Code_t key, Key_State_t state) {
-  if (state == KEY_RELEASED && REGSMENU_Key(key, state)) {
+  if (REGSMENU_Key(key, state)) {
     return true;
   }
 
