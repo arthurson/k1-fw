@@ -1566,12 +1566,12 @@ void BK4819_Init(void) {
 
   BK4819_WriteRegister(BK4819_REG_7B, 0x73DC);
 
-  // BK4819_WriteRegister(BK4819_REG_48, 0x33A8);
-  BK4819_WriteRegister(BK4819_REG_48,
+  BK4819_WriteRegister(BK4819_REG_48, 0x33A8);
+  /* BK4819_WriteRegister(BK4819_REG_48,
                        (0b1100 << 10)        // ?
                            | (0b111111 << 4) // GAIN2
                            | (0b0011 << 0)   // DAC GAIN AFTER G1 G2
-  );
+  ); */
 
   // BK4819_WriteRegister(0x40, 0x3516);
   // BK4819_WriteRegister(0x40, 0x34F0);

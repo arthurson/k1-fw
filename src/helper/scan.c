@@ -401,6 +401,7 @@ void SCAN_SetMode(ScanMode mode) {
     break;
   case SCAN_MODE_SINGLE:
     scan.cmdRangeActive = false;
+    scan.currentF = ctx->frequency;
     break;
   case SCAN_MODE_FREQUENCY:
   case SCAN_MODE_ANALYSER:
@@ -549,7 +550,10 @@ void SCAN_HandleInterrupt(uint16_t int_bits) {
     gRedrawScreen = true;
     Log("[SCAN] SQ lost (open)");
 
-    if (IsSkippable(scan.currentF)) {
+    uint32_t checkF =
+        (scan.mode == SCAN_MODE_SINGLE) ? ctx->frequency : scan.currentF;
+
+    if (IsSkippable(checkF)) {
       sqOpen = false;
       return;
     }
