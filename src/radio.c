@@ -94,6 +94,10 @@ static const ParamDesc PARAM_DESC[PARAM_COUNT] = {
     [PARAM_TX_FREQUENCY_FACT] = {"TX f fact", 0, 0}, // computed, read-only
     [PARAM_AFC] = {"AFC", 0, 9},
     [PARAM_AFC_SPD] = {"AFC SPD", 0, 64},
+    [PARAM_AF_RX_300] = {"RX 300", 0, 9},
+    [PARAM_AF_RX_3K] = {"RX 3K", 0, 9},
+    [PARAM_AF_TX_300] = {"TX 300", 0, 9},
+    [PARAM_AF_TX_3K] = {"TX 3K", 0, 9},
     [PARAM_DEV] = {"DEV", 0, 2550},
     [PARAM_MIC] = {"MIC", 0, 16},
     [PARAM_XTAL] = {"XTAL", 0, XTAL_3_38_4M + 1},
@@ -345,7 +349,8 @@ static void enableCxCSS(VFOContext *ctx) {
 }
 
 #include "./ui/toast.h"
-static void setupToneDetection(VFOContext *ctx) {
+
+void RADIO_SetupToneDetection(VFOContext *ctx) {
   // BK4819_WriteRegister(BK4819_REG_7E, 0x302E); // DC flt BW 0=BYP
 
   uint16_t InterruptMask = BK4819_REG_3F_CxCSS_TAIL;
@@ -479,6 +484,18 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
   case PARAM_AFC_SPD:
     BK4819_SetAFCSpeed(ctx->afc_speed);
     return true;
+  case PARAM_AF_RX_300:
+    BK4819_SetAFResponse(false, false, ctx->af_rx_300);
+    return true;
+  case PARAM_AF_RX_3K:
+    BK4819_SetAFResponse(false, true, ctx->af_rx_3k);
+    return true;
+  case PARAM_AF_TX_300:
+    BK4819_SetAFResponse(true, false, ctx->af_tx_300);
+    return true;
+  case PARAM_AF_TX_3K:
+    BK4819_SetAFResponse(true, true, ctx->af_tx_3k);
+    return true;
   case PARAM_XTAL:
     BK4819_XtalSet(ctx->xtal);
     return true;
@@ -564,6 +581,10 @@ static bool setParamSI4732(VFOContext *ctx, ParamType p) {
   case PARAM_TX_CODE:
   case PARAM_AFC:
   case PARAM_AFC_SPD:
+  case PARAM_AF_RX_300:
+  case PARAM_AF_RX_3K:
+  case PARAM_AF_TX_300:
+  case PARAM_AF_TX_3K:
   case PARAM_DEV:
   case PARAM_MIC:
   case PARAM_XTAL:
@@ -583,6 +604,11 @@ static bool setParamBK1080(VFOContext *ctx, ParamType p) {
   if (p == PARAM_FREQUENCY) {
     BK4819_SelectFilter(ctx->frequency);
     BK1080_SetFrequency(ctx->frequency);
+    return true;
+  }
+  // AF parameters are BK4819-specific
+  if (p == PARAM_AF_RX_300 || p == PARAM_AF_RX_3K || p == PARAM_AF_TX_300 ||
+      p == PARAM_AF_TX_3K) {
     return true;
   }
   return false;
@@ -966,6 +992,18 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
   case PARAM_AFC_SPD:
     ctx->afc_speed = value;
     break;
+  case PARAM_AF_RX_300:
+    ctx->af_rx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    break;
+  case PARAM_AF_RX_3K:
+    ctx->af_rx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
+    break;
+  case PARAM_AF_TX_300:
+    ctx->af_tx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    break;
+  case PARAM_AF_TX_3K:
+    ctx->af_tx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
+    break;
   case PARAM_DEV:
     ctx->dev = value;
     break;
@@ -1085,6 +1123,14 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
     return ctx->afc;
   case PARAM_AFC_SPD:
     return ctx->afc_speed;
+  case PARAM_AF_RX_300:
+    return ctx->af_rx_300 + 4; // -4..+4 -> 0-8
+  case PARAM_AF_RX_3K:
+    return ctx->af_rx_3k + 4; // -4..+4 -> 0-8
+  case PARAM_AF_TX_300:
+    return ctx->af_tx_300 + 4; // -4..+4 -> 0-8
+  case PARAM_AF_TX_3K:
+    return ctx->af_tx_3k + 4; // -4..+4 -> 0-8
   case PARAM_XTAL:
     return ctx->xtal;
   case PARAM_SCRAMBLER:
@@ -1233,7 +1279,7 @@ void RADIO_ApplySettings(VFOContext *ctx) {
 
   const bool needSetupToneDetection =
       (ctx->dirty[PARAM_RX_CODE] || ctx->dirty[PARAM_TX_CODE] ||
-       ctx->dirty[PARAM_TX_STATE]) &&
+       ctx->dirty[PARAM_TX_STATE] || ctx->dirty[PARAM_RADIO]) &&
       ctx->radio_type == RADIO_BK4819;
 
   for (uint8_t p = 0; p < PARAM_COUNT; ++p) {
@@ -1274,7 +1320,7 @@ void RADIO_ApplySettings(VFOContext *ctx) {
   }
 
   if (needSetupToneDetection) {
-    setupToneDetection(ctx);
+    RADIO_SetupToneDetection(ctx);
   }
 }
 
@@ -1342,7 +1388,7 @@ void RADIO_StopTX(VFOContext *ctx) {
 
   BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
 
-  setupToneDetection(ctx);
+  RADIO_SetupToneDetection(ctx);
   BK4819_SelectFilter(ctx->frequency);
   BK4819_TuneTo(ctx->frequency, true);
 }
@@ -2014,6 +2060,12 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
   case PARAM_PRECISE_F_CHANGE:
   case PARAM_COUNT:
     sprintf(buf, "%u", v);
+    break;
+  case PARAM_AF_RX_300:
+  case PARAM_AF_RX_3K:
+  case PARAM_AF_TX_300:
+  case PARAM_AF_TX_3K:
+    sprintf(buf, "%+ddB", (int)v - 4);
     break;
   case PARAM_VOLUME:
     sprintf(buf, "%u%", v);

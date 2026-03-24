@@ -1213,6 +1213,119 @@ uint8_t BK4819_GetAFCSpeed(void) {
   return 63 - ((BK4819_ReadRegister(0x73) >> 5) & 63);
 }
 
+/**
+ * Set AF response coefficient for BK4819.
+ * Based on original BK4829 driver RF_SetAfResponse function.
+ *
+ * @param tx true for TX, false for RX
+ * @param is_3k true for 3kHz, false for 300Hz
+ * @param gain_db gain value from -4 to +4 dB (0 = 0dB default)
+ *
+ * Registers:
+ * - RX 300Hz: 0x54, 0x55
+ * - RX 3kHz:  0x75
+ * - TX 300Hz: 0x44, 0x45
+ * - TX 3kHz:  0x74
+ */
+void BK4819_SetAFResponse(bool tx, bool is_3k, int8_t gain_db) {
+  // Clamp gain to -4..+4 range
+  if (gain_db < -4)
+    gain_db = -4;
+  if (gain_db > 4)
+    gain_db = 4;
+
+  uint16_t d1 = 0, d2 = 0;
+
+  if (is_3k) {
+    // 3kHz response
+    d1 = 0xf50b; // default
+
+    switch (gain_db) {
+    case 1:
+      d1 = 0xe61c;
+      break; // +1dB
+    case 2:
+      d1 = 0xdf22;
+      break; // +2dB
+    case 3:
+      d1 = 0xd42d;
+      break; // +3dB
+    case 4:
+      d1 = 0xcc35;
+      break; // +4dB
+    case -1:
+      d1 = 0xfa02;
+      break; // -1dB
+    case -2:
+      d1 = 0xf200;
+      break; // -2dB
+    case -3:
+      d1 = 0xe800;
+      break; // -3dB (inferred)
+    case -4:
+      d1 = 0xda00;
+      break; // -4dB
+    default:
+      break; // 0dB default
+    }
+
+    if (tx) {
+      BK4819_WriteRegister(0x74, d1); // TX 3kHz
+    } else {
+      BK4819_WriteRegister(0x75, d1); // RX 3kHz
+    }
+  } else {
+    // 300Hz response
+    d1 = 0x9009; // default
+    d2 = 0x31a9; // default
+
+    switch (gain_db) {
+    case 1:
+      d1 = 0x8f90;
+      d2 = 0x31f3;
+      break; // +1dB
+    case 2:
+      d1 = 0x8f46;
+      d2 = 0x31e7;
+      break; // +2dB
+    case 3:
+      d1 = 0x8ed8;
+      d2 = 0x3232;
+      break; // +3dB
+    case 4:
+      d1 = 0x8d8f;
+      d2 = 0x3359;
+      break; // +4dB
+    case -1:
+      d1 = 0x91c1;
+      d2 = 0x3040;
+      break; // -1dB
+    case -2:
+      d1 = 0x920b;
+      d2 = 0x3010;
+      break; // -2dB
+    case -3:
+      d1 = 0x935a;
+      d2 = 0x2eff;
+      break; // -3dB
+    case -4:
+      d1 = 0x94a9;
+      d2 = 0x2eee;
+      break; // -4dB (inferred)
+    default:
+      break; // 0dB default
+    }
+
+    if (tx) {
+      BK4819_WriteRegister(0x44, d1); // TX 300Hz
+      BK4819_WriteRegister(0x45, d2);
+    } else {
+      BK4819_WriteRegister(0x54, d1); // RX 300Hz
+      BK4819_WriteRegister(0x55, d2);
+    }
+  }
+}
+
 // ============================================================================
 // RSSI and Signal Measurements
 // ============================================================================
@@ -1492,7 +1605,6 @@ void BK4819_Init(void) {
 
   RF_SetRxEqualizer(-3, +4);
 
-
   BK4819_WriteRegister(BK4819_REG_7E, 0x3029); // #x302E tx dcc before alc
   BK4819_WriteRegister(BK4819_REG_46, 0x600A);
   BK4819_WriteRegister(0x4A, 0x5430);
@@ -1500,7 +1612,7 @@ void BK4819_Init(void) {
   gGpioOutState = 0x9000;
 
   BK4819_WriteRegister(BK4819_REG_33, gGpioOutState);
-  BK4819_WriteRegister(BK4819_REG_3F, 0);
+  // BK4819_WriteRegister(BK4819_REG_3F, 0);
 
   BK4819_SetupPowerAmplifier(0, 0);
   BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
@@ -1512,6 +1624,10 @@ void BK4819_Init(void) {
 
   BK4819_WriteRegister(0x40, (BK4819_ReadRegister(0x40) & ~(0x7FF)) |
                                  (gSettings.deviation * 10) | (1 << 12));
+
+  // Enable squelch interrupts by default
+  BK4819_WriteRegister(BK4819_REG_3F, BK4819_REG_3F_SQUELCH_LOST |
+                                          BK4819_REG_3F_SQUELCH_FOUND);
 
   isInitialized = true;
 }
