@@ -40,7 +40,7 @@ Loot *LOOT_Get(uint32_t f) {
 
 int16_t LOOT_IndexOf(Loot *item) {
   for (uint16_t i = 0; i < LOOT_Size(); ++i) {
-    if (&item[i] == item) {
+    if (&loot[i] == item) {
       return i;
     }
   }
@@ -163,28 +163,29 @@ void LOOT_UpdateEx(Loot *item, Measurement *msm) {
     gLastActiveLootIndex = LOOT_IndexOf(item);
   }
   if (msm->open) {
+    item->lastTimeOpen = Now();
     uint32_t cd = 0;
     uint16_t ct = 0;
     uint8_t Code = 0;
     BK4819_CssScanResult_t res = BK4819_GetCxCSSScanResult(&cd, &ct);
-    item->isCd = false;
+    msm->isCd = false;
     switch (res) {
     case BK4819_CSS_RESULT_CDCSS:
-      item->code = DCS_GetCdcssCode(cd);
-      item->isCd = true;
+      msm->code = DCS_GetCdcssCode(cd);
+      msm->isCd = true;
       break;
     case BK4819_CSS_RESULT_CTCSS:
-      item->code = DCS_GetCtcssCode(ct);
+      msm->code = DCS_GetCtcssCode(ct);
       break;
     default:
+      msm->code = 255;
       break;
     }
-    item->lastTimeOpen = Now();
   }
   lastTimeCheck = Now();
   item->open = msm->open;
-  msm->code = item->code;
-  msm->isCd = item->isCd;
+  item->code = msm->code;
+  item->isCd = msm->isCd;
 
   if (msm->blacklist) {
     item->blacklist = true;

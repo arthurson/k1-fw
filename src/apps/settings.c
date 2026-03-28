@@ -28,6 +28,12 @@ static void setUpConv(uint32_t v, uint32_t _) {
   (void)_;
   SETTINGS_SetValue(SETTING_UPCONVERTER, v);
 }
+static void setFcorr(uint32_t v, uint32_t _) {
+  (void)_;
+  SETTINGS_SetValue(SETTING_FREQ_CORRECTION, v);
+  ctx->dirty[PARAM_FREQUENCY] = true;
+  RADIO_ApplySettings(ctx);
+}
 
 static bool calibrate(const MenuItem *item, KEY_Code_t key, Key_State_t state) {
   (void)item;
@@ -44,6 +50,17 @@ static bool calibrate(const MenuItem *item, KEY_Code_t key, Key_State_t state) {
   FINPUT_setup(500, 860, UNIT_VOLTS, false);
   FINPUT_init();
   gFInputActive = true;
+  return true;
+}
+static bool fcorr(const MenuItem *item, KEY_Code_t key, Key_State_t state) {
+  (void)item;
+
+  if (state != KEY_RELEASED || key != KEY_MENU) {
+    return false;
+  }
+
+  FINPUT_setup(0, 50000000, UNIT_MHZ, false);
+  FINPUT_Show(setFcorr);
   return true;
 }
 static bool upconv(const MenuItem *item, KEY_Code_t key, Key_State_t state) {
@@ -107,7 +124,8 @@ static const MenuItem radioMenuItems[] = {
     {"Roger", SETTING_ROGER, getValS, updateValS},
     {"Multiwatch", SETTING_MULTIWATCH, getValS, updateValS},
     {"Mic", SETTING_MIC, getValS, updateValS},
-    {"Freq corr", SETTING_FREQ_CORRECTION, getValS, updateValS},
+    {"Freq corr", SETTING_FREQ_CORRECTION, getValS, updateValS,
+     .action = fcorr},
     {"Upconv", SETTING_UPCONVERTER, getValS, .action = upconv},
 };
 

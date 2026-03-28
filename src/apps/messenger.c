@@ -18,7 +18,7 @@
 #include <string.h>
 
 // Максимальное количество сообщений в истории
-#define MAX_MESSAGES 10
+#define MAX_MESSAGES 8
 
 bool gHasUnreadMessages;
 

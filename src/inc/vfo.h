@@ -55,6 +55,10 @@ typedef const enum {
 
   PARAM_AFC,
   PARAM_AFC_SPD,
+  PARAM_AF_RX_300,
+  PARAM_AF_RX_3K,
+  PARAM_AF_TX_300,
+  PARAM_AF_TX_3K,
   PARAM_DEV,
   PARAM_MIC,
   PARAM_XTAL,
@@ -144,9 +148,9 @@ typedef struct {
   struct {
     uint32_t frequency : 27; // Частота передачи (может отличаться от RX)
     TXStatus last_error : 3;
-    bool dirty : 1;     // Флаг изменения параметров TX
-    bool is_active : 1; // true, если идёт передача
-    uint8_t power_level : 4; // Уровень мощности
+    uint8_t power_level; // Уровень мощности
+    bool dirty : 1;      // Флаг изменения параметров TX
+    bool is_active : 1;  // true, если идёт передача
     OffsetDirection offsetDirection : 4;
     bool pa_enabled : 1;
     Code code;
@@ -162,6 +166,10 @@ typedef struct {
   uint8_t volume; // Громкость
   uint8_t afc;
   uint8_t afc_speed;
+  int8_t af_rx_300; // RX 300Hz AF response gain (-4..+4 dB, 0=0dB)
+  int8_t af_rx_3k;  // RX 3kHz AF response gain (-4..+4 dB, 0=0dB)
+  int8_t af_tx_300; // TX 300Hz AF response gain (-4..+4 dB, 0=0dB)
+  int8_t af_tx_3k;  // TX 3kHz AF response gain (-4..+4 dB, 0=0dB)
   uint8_t scrambler;
   Squelch squelch;
   Code code;

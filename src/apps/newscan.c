@@ -298,6 +298,7 @@ void updateListening() {
 }
 
 void updateScan() {
+  RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
   RADIO_SetParam(ctx, PARAM_FREQUENCY, msm->f, false);
   RADIO_ApplySettings(ctx);
   SYSTICK_DelayUs(delay);

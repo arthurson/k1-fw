@@ -36,9 +36,9 @@ static const char *graphMeasurementNames[] = {
 
 static void updateBand(void) {
   uint32_t f = RADIO_GetParam(ctx, PARAM_FREQUENCY);
-  if (!BANDS_InRange(f, &gCurrentBand)) {
-    gCurrentBand = BANDS_ByFrequency(f);
-  }
+  // if (gCurrentBand.start == 0 && !BANDS_InRange(f, &gCurrentBand)) {
+  gCurrentBand = BANDS_ByFrequency(f);
+  // }
 }
 
 static void setChannel(uint16_t v) {
@@ -48,6 +48,7 @@ static void setChannel(uint16_t v) {
 
 static void tuneTo(uint32_t f, uint32_t _) {
   (void)_;
+  RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, true, false);
   RADIO_SetParam(ctx, PARAM_FREQUENCY, f, true);
   RADIO_ApplySettings(ctx);
   updateBand();
@@ -62,7 +63,6 @@ void VFO1_init(void) {
   updateBand();
 
   SCAN_SetMode(SCAN_MODE_SINGLE);
-  // SCAN_Init(false);
 }
 
 void VFO1_update(void) {}
@@ -89,6 +89,7 @@ static bool handleFrequencyChange(KEY_Code_t key) {
   if (vfo->mode == MODE_CHANNEL) {
     RADIO_NextChannel((key == KEY_UP) ^ gSettings.invertButtons);
   } else {
+    RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
     RADIO_IncDecParam(ctx, PARAM_FREQUENCY,
                       (key == KEY_UP) ^ gSettings.invertButtons, true);
   }
@@ -423,7 +424,7 @@ static void renderMonitorMode(uint8_t BASE) {
         [GRAPH_GLITCH] = {0, 255},
         [GRAPH_SNR] = {0, 30},
         [GRAPH_APRS] = {0, 4095},
-        [GRAPH_TX] = {0, UINT16_MAX},
+        [GRAPH_TX] = {0, 8192},
         [GRAPH_COUNT] = {RSSI_MIN, RSSI_MAX},
     };
 
@@ -439,12 +440,12 @@ static void renderMonitorMode(uint8_t BASE) {
                     ctx->tx_state.pa_enabled ? '+' : '-');
     }
   } else {
-    UI_RSSIBar(BASE + 1);
+    UI_RSSIBar(BASE + 1 + 6);
   }
 }
 
 void VFO1_render(void) {
-  const uint8_t BASE = 40;
+  const uint8_t BASE = 39;
 
   renderStatusLine();
 
@@ -475,7 +476,7 @@ void VFO1_render(void) {
     renderMonitorMode(BASE);
   } else {
     if (vfo->msm.open || gSettings.alwaysRssi) {
-      UI_RSSIBar(BASE + 1);
+      UI_RSSIBar(BASE + 1 + 6);
     }
     if (ctx->tx_state.is_active) {
       UI_TxBar(BASE + 1);

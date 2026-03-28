@@ -81,12 +81,13 @@ Settings gSettings = {
     .skipGarbageFrequencies = true,
     // .activeVFO = 0,
     .backlightOnSquelch = BL_SQL_ON,
-    .batteryCalibration = 2000,
+    .batteryCalibration = 2184,
     .batteryType = BAT_1600,
     .batteryStyle = BAT_PERCENT,
     // .upconverter = 0,
     .deviation = 130, // 1300
-    .freqCorrection = UINT16_MAX / 2,
+    .freqCorrection = 0,
+    .invertButtons = true,
 };
 
 const uint32_t EEPROM_SIZES[6] = {
@@ -449,7 +450,7 @@ const char *SETTINGS_GetValueString(Setting s) {
     sprintf(buf, "%d", v - 8);
     break;
   case SETTING_FREQ_CORRECTION:
-    sprintf(buf, "%+dHz", (v - UINT16_MAX / 2) * 10);
+    sprintf(buf, "%+dHz", v * 10);
     break;
 
   case SETTING_MIC:

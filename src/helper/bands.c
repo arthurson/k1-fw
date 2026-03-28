@@ -714,7 +714,7 @@ static Band rangesStack[RANGES_STACK_SIZE] = {0};
 static int8_t rangesStackIndex = -1;
 
 void BANDS_Recreate() {
-  for (uint8_t i = 0; i < MAX_BANDS; ++i) {
+  for (uint8_t i = 0; i < 67; ++i) {
     STORAGE_SAVE("Bands.bnd", i, &defaultBands[i]);
   }
 }
@@ -722,12 +722,12 @@ void BANDS_Recreate() {
 bool BANDS_InRange(uint32_t f, Band *b) { return b->start <= f && f < b->end; }
 
 Band BANDS_ByFrequency(uint32_t f) {
-  Band b[MAX_BANDS];
-  Storage_LoadMultiple("Bands.bnd", 0, b, sizeof(Band), MAX_BANDS);
+  // Band b[MAX_BANDS];
+  // Storage_LoadMultiple("Bands.bnd", 0, b, sizeof(Band), MAX_BANDS);
   for (uint8_t i = 0; i < MAX_BANDS; ++i) {
-    if (IsReadable(b[i].name)) {
-      if (BANDS_InRange(f, &b[i])) {
-        return b[i];
+    if (IsReadable(defaultBands[i].name)) {
+      if (BANDS_InRange(f, &defaultBands[i])) {
+        return defaultBands[i];
       }
     }
   }

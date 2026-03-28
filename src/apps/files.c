@@ -10,12 +10,11 @@
 #include "files.h"
 #include <string.h>
 
-// Уменьшено с 32 до 20, имя с 16 до 12 байт.
-// Было: 32 × 24 = 768 байт. Стало: 20 × 20 = 400 байт. Экономия: 368 байт.
+// Increased MAX_NAME_LEN from 12 to 16 to fit filenames like "Settings.set" (12 chars + null)
+// Memory: 20 × 20 = 400 bytes → 20 × 24 = 480 bytes (80 bytes more, still acceptable)
 #define MAX_FILES     20
 #define MAX_PATH_LEN  64
-#define MAX_NAME_LEN  12   // 11 символов + '\0'; lfs по умолчанию LFS_NAME_MAX=255,
-                           // но реальные имена короче
+#define MAX_NAME_LEN  16   // 15 символов + '\0'; достаточно для имён типа "Settings.set"
 
 typedef enum {
   FILE_TYPE_FILE = 0,
@@ -32,7 +31,7 @@ typedef struct {
   char name[MAX_NAME_LEN];
   uint32_t size;            // для папок = 0
   uint8_t type;             // FileType; uint8_t вместо int экономит выравнивание
-} FileEntry;                // sizeof = 12+4+1+pad(3) = 20 байт
+} FileEntry;                // sizeof = 16+4+1+pad(3) = 24 байт
 
 static FileEntry gFilesList[MAX_FILES];
 static uint16_t gFilesCount = 0;
@@ -80,8 +79,10 @@ static void deleteItem(const char *name, FileType type) {
   (void)type; // lfs_remove работает одинаково для файлов и папок
   char fullPath[MAX_PATH_LEN];
 
+  // Construct path without leading slash for root-level files
+  // to match how storage.c creates files (e.g., "Settings.set" not "/Settings.set")
   if (strcmp(gCurrentPath, "/") == 0) {
-    snprintf(fullPath, sizeof(fullPath), "/%s", name);
+    snprintf(fullPath, sizeof(fullPath), "%s", name);
   } else {
     snprintf(fullPath, sizeof(fullPath), "%s/%s", gCurrentPath, name);
   }

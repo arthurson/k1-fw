@@ -94,6 +94,10 @@ static const ParamDesc PARAM_DESC[PARAM_COUNT] = {
     [PARAM_TX_FREQUENCY_FACT] = {"TX f fact", 0, 0}, // computed, read-only
     [PARAM_AFC] = {"AFC", 0, 9},
     [PARAM_AFC_SPD] = {"AFC SPD", 0, 64},
+    [PARAM_AF_RX_300] = {"RX 300", 0, 9},
+    [PARAM_AF_RX_3K] = {"RX 3K", 0, 9},
+    [PARAM_AF_TX_300] = {"TX 300", 0, 9},
+    [PARAM_AF_TX_3K] = {"TX 3K", 0, 9},
     [PARAM_DEV] = {"DEV", 0, 2550},
     [PARAM_MIC] = {"MIC", 0, 16},
     [PARAM_XTAL] = {"XTAL", 0, XTAL_3_38_4M + 1},
@@ -344,8 +348,10 @@ static void enableCxCSS(VFOContext *ctx) {
   }
 }
 
-static void setupToneDetection(VFOContext *ctx) {
-  BK4819_WriteRegister(BK4819_REG_7E, 0x302E); // DC flt BW 0=BYP
+#include "./ui/toast.h"
+
+void RADIO_SetupToneDetection(VFOContext *ctx) {
+  // BK4819_WriteRegister(BK4819_REG_7E, 0x302E); // DC flt BW 0=BYP
 
   uint16_t InterruptMask = BK4819_REG_3F_CxCSS_TAIL;
 
@@ -353,7 +359,7 @@ static void setupToneDetection(VFOContext *ctx) {
                    BK4819_REG_3F_FSK_FIFO_ALMOST_FULL |
                    BK4819_REG_3F_FSK_RX_FINISHED;
 
-  // InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
+  InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
 
   if (gSettings.dtmfdecode) {
     BK4819_EnableDTMF();
@@ -365,14 +371,17 @@ static void setupToneDetection(VFOContext *ctx) {
   case CODE_TYPE_DIGITAL:
   case CODE_TYPE_REVERSE_DIGITAL:
     // Log("DCS on");
+    InterruptMask |= BK4819_REG_3F_CDCSS_FOUND | BK4819_REG_3F_CDCSS_LOST;
     BK4819_SetCDCSSCodeWord(
         DCS_GetGolayCodeWord(ctx->code.type, ctx->code.value));
-    InterruptMask |= BK4819_REG_3F_CDCSS_FOUND | BK4819_REG_3F_CDCSS_LOST;
+    // TOAST_Push("CD ON");
     break;
   case CODE_TYPE_CONTINUOUS_TONE:
     // Log("CTCSS on");
-    BK4819_SetCTCSSFrequency(CTCSS_Options[ctx->code.value]);
     InterruptMask |= BK4819_REG_3F_CTCSS_FOUND | BK4819_REG_3F_CTCSS_LOST;
+    BK4819_SetCTCSSFrequency(CTCSS_Options[ctx->code.value]);
+    // TOAST_Push("CT ON");
+
     break;
   default:
     // Log("STE on");
@@ -475,6 +484,18 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
   case PARAM_AFC_SPD:
     BK4819_SetAFCSpeed(ctx->afc_speed);
     return true;
+  case PARAM_AF_RX_300:
+    BK4819_SetAFResponse(false, false, ctx->af_rx_300);
+    return true;
+  case PARAM_AF_RX_3K:
+    BK4819_SetAFResponse(false, true, ctx->af_rx_3k);
+    return true;
+  case PARAM_AF_TX_300:
+    BK4819_SetAFResponse(true, false, ctx->af_tx_300);
+    return true;
+  case PARAM_AF_TX_3K:
+    BK4819_SetAFResponse(true, true, ctx->af_tx_3k);
+    return true;
   case PARAM_XTAL:
     BK4819_XtalSet(ctx->xtal);
     return true;
@@ -560,6 +581,10 @@ static bool setParamSI4732(VFOContext *ctx, ParamType p) {
   case PARAM_TX_CODE:
   case PARAM_AFC:
   case PARAM_AFC_SPD:
+  case PARAM_AF_RX_300:
+  case PARAM_AF_RX_3K:
+  case PARAM_AF_TX_300:
+  case PARAM_AF_TX_3K:
   case PARAM_DEV:
   case PARAM_MIC:
   case PARAM_XTAL:
@@ -579,6 +604,11 @@ static bool setParamBK1080(VFOContext *ctx, ParamType p) {
   if (p == PARAM_FREQUENCY) {
     BK4819_SelectFilter(ctx->frequency);
     BK1080_SetFrequency(ctx->frequency);
+    return true;
+  }
+  // AF parameters are BK4819-specific
+  if (p == PARAM_AF_RX_300 || p == PARAM_AF_RX_3K || p == PARAM_AF_TX_300 ||
+      p == PARAM_AF_TX_3K) {
     return true;
   }
   return false;
@@ -884,7 +914,10 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     case MOD_LSB:
     case MOD_USB:
     case MOD_AM:
-      RADIO_SetParam(ctx, PARAM_BANDWIDTH, BK4819_FILTER_BW_6k, save_to_eeprom);
+      if (RADIO_GetParam(ctx, PARAM_FREQUENCY) < 30 * MHZ) {
+        RADIO_SetParam(ctx, PARAM_BANDWIDTH, BK4819_FILTER_BW_6k,
+                       save_to_eeprom);
+      }
       break;
     default:
       RADIO_SetParam(ctx, PARAM_BANDWIDTH, BK4819_FILTER_BW_12k,
@@ -930,8 +963,8 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     break;
   case PARAM_POWER: {
     ctx->power = value;
-    ctx->tx_state.power_level =
-        BANDS_CalculateOutputPower(ctx->power, ctx->tx_state.frequency);
+    ctx->tx_state.power_level = BANDS_CalculateOutputPower(
+        ctx->power, RADIO_GetParam(ctx, PARAM_TX_FREQUENCY_FACT));
 
     ctx->tx_state.pa_enabled = true;
     ctx->dirty[PARAM_TX_POWER] = true;
@@ -958,6 +991,18 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     break;
   case PARAM_AFC_SPD:
     ctx->afc_speed = value;
+    break;
+  case PARAM_AF_RX_300:
+    ctx->af_rx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    break;
+  case PARAM_AF_RX_3K:
+    ctx->af_rx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
+    break;
+  case PARAM_AF_TX_300:
+    ctx->af_tx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    break;
+  case PARAM_AF_TX_3K:
+    ctx->af_tx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
     break;
   case PARAM_DEV:
     ctx->dev = value;
@@ -1078,6 +1123,14 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
     return ctx->afc;
   case PARAM_AFC_SPD:
     return ctx->afc_speed;
+  case PARAM_AF_RX_300:
+    return ctx->af_rx_300 + 4; // -4..+4 -> 0-8
+  case PARAM_AF_RX_3K:
+    return ctx->af_rx_3k + 4; // -4..+4 -> 0-8
+  case PARAM_AF_TX_300:
+    return ctx->af_tx_300 + 4; // -4..+4 -> 0-8
+  case PARAM_AF_TX_3K:
+    return ctx->af_tx_3k + 4; // -4..+4 -> 0-8
   case PARAM_XTAL:
     return ctx->xtal;
   case PARAM_SCRAMBLER:
@@ -1226,7 +1279,7 @@ void RADIO_ApplySettings(VFOContext *ctx) {
 
   const bool needSetupToneDetection =
       (ctx->dirty[PARAM_RX_CODE] || ctx->dirty[PARAM_TX_CODE] ||
-       ctx->dirty[PARAM_TX_STATE]) &&
+       ctx->dirty[PARAM_TX_STATE] || ctx->dirty[PARAM_RADIO]) &&
       ctx->radio_type == RADIO_BK4819;
 
   for (uint8_t p = 0; p < PARAM_COUNT; ++p) {
@@ -1267,7 +1320,7 @@ void RADIO_ApplySettings(VFOContext *ctx) {
   }
 
   if (needSetupToneDetection) {
-    setupToneDetection(ctx);
+    RADIO_SetupToneDetection(ctx);
   }
 }
 
@@ -1321,10 +1374,13 @@ void RADIO_StopTX(VFOContext *ctx) {
 
   sendEOT();
 
-  BK4819_TurnsOffTones_TurnsOnRX();
-
-  BK4819_SetupPowerAmplifier(0, 0);
+  // сперва отрубаем несучку
   BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
+  BK4819_SetupPowerAmplifier(0, 0);
+
+  // затем отрубаем тон, так в эфире последнее будет тон,
+  // а не несучка после отключения тона
+  BK4819_TurnsOffTones_TurnsOnRX();
 
   ctx->tx_state.is_active = false;
   BOARD_ToggleRed(false);
@@ -1332,7 +1388,7 @@ void RADIO_StopTX(VFOContext *ctx) {
 
   BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
 
-  setupToneDetection(ctx);
+  RADIO_SetupToneDetection(ctx);
   BK4819_SelectFilter(ctx->frequency);
   BK4819_TuneTo(ctx->frequency, true);
 }
@@ -1573,6 +1629,7 @@ void RADIO_SaveVFOToStorage(const RadioState *state, uint8_t vfo_index,
   storage->rxF = ctx->frequency;
   storage->step = ctx->step;
 
+  storage->power = ctx->power;
   storage->bw = ctx->bandwidth;
   storage->modulation = ctx->modulation;
   storage->gainIndex = ctx->gain;
@@ -1710,17 +1767,16 @@ static bool isBroadcastReceiver(const VFOContext *ctx) {
   return (ctx->radio_type == RADIO_SI4732 || ctx->radio_type == RADIO_BK1080);
 }
 
-bool RADIO_CheckSquelch(VFOContext *ctx) {
-  if (ctx->tx_state.is_active) {
-    return false;
-  }
-  if (gMonitorMode) {
-    return true;
-  }
-  if (ctx->radio_type == RADIO_BK4819) {
-    return BK4819_IsSquelchOpen();
-  }
+#include "helper/scan.h"
 
+bool RADIO_CheckSquelch(VFOContext *ctx) {
+  if (ctx->tx_state.is_active)
+    return false;
+  if (gMonitorMode)
+    return true;
+  if (ctx->radio_type == RADIO_BK4819) {
+    return SCAN_IsSqOpen();
+  }
   return gShowAllRSSI ? RADIO_GetSNR(ctx) > ctx->squelch.value : true;
 }
 
@@ -1742,8 +1798,6 @@ void RADIO_UpdateSquelch(RadioState *state) {
   RADIO_UpdateMeasurement(&state->vfos[state->active_vfo_index]);
   if (vfo->is_open != vfo->msm.open) {
     gRedrawScreen = true; // TODO: mv
-    // RADIO_SetParam(ctx, PARAM_AFC_SPD, vfo->msm.open ? 57 : 63, false);
-    RADIO_ApplySettings(ctx);
     vfo->is_open = vfo->msm.open;
     RADIO_SwitchAudioToVFO(state, state->active_vfo_index);
   }
@@ -2007,6 +2061,12 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
   case PARAM_COUNT:
     sprintf(buf, "%u", v);
     break;
+  case PARAM_AF_RX_300:
+  case PARAM_AF_RX_3K:
+  case PARAM_AF_TX_300:
+  case PARAM_AF_TX_3K:
+    sprintf(buf, "%+ddB", (int)v - 4);
+    break;
   case PARAM_VOLUME:
     sprintf(buf, "%u%", v);
     break;
@@ -2047,3 +2107,32 @@ const ExtendedVFOContext *RADIO_GetCurrentVFOConst(const RadioState *state) {
 }
 
 void RADIO_FastSquelchUpdate() { vfo->is_open = RADIO_CheckSquelch(ctx); }
+
+// Немедленно заглушить аудио (без изменения состояния squelch-логики)
+void RADIO_MuteAudioNow(RadioState *state) {
+  if (gMonitorMode) {
+    return;
+  }
+  ExtendedVFOContext *ev = &state->vfos[state->active_vfo_index];
+  if (!ev->is_open)
+    return; // уже тихо
+  ev->is_open = false;
+  RXSW_SwitchTo(&state->rx_switch, &ev->context, false);
+  BOARD_ToggleGreen(false);
+  if (gSettings.backlightOnSquelch == BL_SQL_OPEN)
+    BACKLIGHT_TurnOff();
+  LogC(LOG_C_YELLOW, "[RADIO] Audio MUTED (tail/sq-)");
+}
+
+// Восстановить аудио (сигнал вернулся во время tail hold)
+void RADIO_UnmuteAudioNow(RadioState *state) {
+  ExtendedVFOContext *ev = &state->vfos[state->active_vfo_index];
+  if (ev->is_open)
+    return; // уже открыт
+  ev->is_open = true;
+  RXSW_SwitchTo(&state->rx_switch, &ev->context, true);
+  BOARD_ToggleGreen(true);
+  if (gSettings.backlightOnSquelch != BL_SQL_OFF)
+    BACKLIGHT_TurnOn();
+  LogC(LOG_C_YELLOW, "[RADIO] Audio RESTORED (sq+ during tail)");
+}
