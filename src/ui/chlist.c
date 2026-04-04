@@ -44,6 +44,8 @@ static char tempName[10] = {0};
 static void renderItem(uint16_t index, uint8_t i) {
   uint16_t chNum = index;
 
+  // Clear channel data before loading to prevent stale data display
+  memset(&ch, 0, sizeof(CH));
   STORAGE_LOAD("Channels.ch", chNum, &ch);
 
   uint8_t y = MENU_Y + i * MENU_ITEM_H;
@@ -104,7 +106,7 @@ static bool action(const uint16_t index, KEY_Code_t key, Key_State_t state) {
       return true;
     }
   } */
-  CH tmp;
+  CH tmp = {0}; // Initialize to zero to prevent garbage data
   if (state == KEY_RELEASED) {
     switch (key) {
     case KEY_EXIT:
@@ -113,16 +115,19 @@ static bool action(const uint16_t index, KEY_Code_t key, Key_State_t state) {
       return true;
     case KEY_1:
       if (viewMode == MODE_DELETE) {
-        STORAGE_LOAD("Channels.ch", chNum, &tmp);
-        tmp.name[0] = '\0';
-        STORAGE_SAVE("Channels.ch", chNum, &tmp);
+        // Try to load existing channel, or use empty struct
+        bool loaded = STORAGE_LOAD("Channels.ch", chNum, &tmp);
+        tmp.name[0] = '\0'; // Clear name to mark as empty
+        bool saved = STORAGE_SAVE("Channels.ch", chNum, &tmp);
+        Log("[CHLIST] Delete CH %u: loaded=%d, saved=%d", chNum, loaded, saved);
         return true;
       }
 
       if (viewMode == MODE_TX) {
-        STORAGE_LOAD("Channels.ch", chNum, &tmp);
-        tmp.allowTx = !tmp.allowTx;
-        STORAGE_SAVE("Channels.ch", chNum, &tmp);
+        if (STORAGE_LOAD("Channels.ch", chNum, &tmp)) {
+          tmp.allowTx = !tmp.allowTx;
+          STORAGE_SAVE("Channels.ch", chNum, &tmp);
+        }
         return true;
       }
       break;

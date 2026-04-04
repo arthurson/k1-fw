@@ -34,6 +34,12 @@ bool LOOT_SortByBlacklist(const Loot *a, const Loot *b);
 void LOOT_RemoveBlacklisted(void);
 CH LOOT_ToCh(const Loot *loot);
 
+// Persistence: save/load loot list to/from file
+bool LOOT_SaveToFile(const char *filename);
+bool LOOT_LoadFromFile(const char *filename);
+bool LOOT_Save(void);
+bool LOOT_Load(void);
+
 extern Loot *gLastActiveLoot;
 extern int16_t gLastActiveLootIndex;
 

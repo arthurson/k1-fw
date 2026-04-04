@@ -276,3 +276,62 @@ CH LOOT_ToCh(const Loot *loot) {
 
   return ch;
 }
+
+// ============================================================================
+// Persistence: save/load loot list to/from file
+// ============================================================================
+
+bool LOOT_SaveToFile(const char *filename) {
+  uint16_t count = LOOT_Size();
+  if (count == 0) {
+    // Save empty list
+    return Storage_Save(filename, 0, &count, sizeof(count));
+  }
+
+  // Save count + loot items
+  // First save the count at index 0
+  if (!Storage_Save(filename, 0, &count, sizeof(count))) {
+    return false;
+  }
+
+  // Save all loot items starting from index 1
+  return Storage_SaveMultiple(filename, 1, loot, sizeof(Loot), count);
+}
+
+bool LOOT_LoadFromFile(const char *filename) {
+  uint16_t count = 0;
+
+  // Load count first
+  if (!Storage_Load(filename, 0, &count, sizeof(count))) {
+    return false;
+  }
+
+  if (count == 0 || count > LOOT_SIZE_MAX) {
+    LOOT_Clear();
+    return true;
+  }
+
+  // Load all loot items
+  if (Storage_LoadMultiple(filename, 1, loot, sizeof(Loot), count)) {
+    lootIndex = count - 1;
+
+    // Restore gLastActiveLoot pointer
+    if (gLastActiveLootIndex >= 0 && gLastActiveLootIndex < count) {
+      gLastActiveLoot = &loot[gLastActiveLootIndex];
+    } else {
+      gLastActiveLoot = NULL;
+      gLastActiveLootIndex = -1;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+// Default filename
+#define LOOT_DEFAULT_FILE "Loot.loot"
+
+bool LOOT_Save(void) { return LOOT_SaveToFile(LOOT_DEFAULT_FILE); }
+
+bool LOOT_Load(void) { return LOOT_LoadFromFile(LOOT_DEFAULT_FILE); }
