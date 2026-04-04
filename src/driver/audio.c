@@ -1,3 +1,4 @@
+#include "st7565.h"
 #include <stdbool.h>
 #ifdef ENABLE_FMRADIO
 #include "app/fm.h"
@@ -11,10 +12,18 @@
 #include "py25q16.h"
 #include "systick.h"
 
+static bool lastState;
+
 void AUDIO_ToggleSpeaker(bool on) {
+  if (on == lastState) {
+    return;
+  }
+
   if (on) {
     AUDIO_AudioPathOn();
   } else {
     AUDIO_AudioPathOff();
   }
+  lastState = on;
+  gRedrawScreen = true;
 }
