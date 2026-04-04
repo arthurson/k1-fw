@@ -384,6 +384,11 @@ static void HandleStateListening(void) {
   bool wasOpen = scan.isOpen;
   scan.isOpen = sqOpen; // состояние из прерывания
 
+  // закрываемся без учёта прерывания, вдруг залипло
+  if (ctx->radio_type == RADIO_BK4819) {
+    scan.isOpen = BK4819_IsSquelchOpen();
+  }
+
   SP_AddPoint(&scan.measurement);
   RADIO_UpdateSquelch(gRadioState);
 
@@ -665,6 +670,14 @@ void SCAN_HandleInterrupt(uint16_t int_bits) {
   // Squelch закрылся (сигнал пропал)
   if (int_bits & BK4819_REG_02_MASK_SQUELCH_FOUND) {
     Log("[SCAN] SQ found (closed)");
+
+    // защита от преждевременного закрытия шумодава
+    if (ctx->radio_type == RADIO_BK4819) {
+      SYSTICK_DelayMs(5);
+      if (BK4819_IsSquelchOpen()) {
+        return;
+      }
+    }
     sqOpen = false;
     RADIO_MuteAudioNow(gRadioState);
     gRedrawScreen = true;
