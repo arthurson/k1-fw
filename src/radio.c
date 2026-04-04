@@ -359,7 +359,7 @@ void RADIO_SetupToneDetection(VFOContext *ctx) {
                    BK4819_REG_3F_FSK_FIFO_ALMOST_FULL |
                    BK4819_REG_3F_FSK_RX_FINISHED;
 
-  InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
+  // InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
 
   if (gSettings.dtmfdecode) {
     BK4819_EnableDTMF();

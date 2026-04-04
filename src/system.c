@@ -557,5 +557,7 @@ void SYS_Main(void) {
     }
 
     appRender();
+
+    __WFI();
   }
 }

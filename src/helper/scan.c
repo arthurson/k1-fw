@@ -11,8 +11,30 @@
 #include "measurements.h"
 
 #define GARBAGE_FREQ_STEP 650000U
-#define SOFT_SQ_HEADROOM 15 // % смягчения аппаратных порогов
+#define SOFT_SQ_HEADROOM 25 // % смягчения аппаратных порогов
 #define STE_DEBOUNCE_MS 250 // окно подавления STE-хвоста
+
+// --- Адаптивный детектор (EMA) ---
+#define ADAP_MIN_SAMPLES 8   // прогрев
+#define ADAP_EMA_SHIFT 4     // alpha = 1/16
+#define ADAP_WARMUP_SHIFT 2  // alpha = 1/4 при прогреве (быстрая сходимость)
+#define DELTA_RSSI_THRESH 8  // порог резкого роста rssi
+#define DELTA_NOISE_THRESH 4 // порог резкого падения noise
+#define FLOOR_MARGIN_RSSI 6  // запас над EMA rssi
+#define FLOOR_MARGIN_NOISE 3 // запас под EMA noise
+#define FLOOR_MARGIN_GLITCH 3
+
+typedef struct {
+  uint16_t rssiEma;   // значение << ADAP_EMA_SHIFT
+  uint16_t noiseEma;
+  uint16_t glitchEma;
+  uint8_t count;
+  uint8_t prevRssi;
+  uint8_t prevNoise;
+  uint8_t prevGlitch;
+} AdaptiveFloor;
+
+static AdaptiveFloor afloor;
 
 static ScanContext scan = {
     .state = SCAN_STATE_IDLE,
@@ -75,6 +97,83 @@ static bool SoftSq_Check(uint8_t rssi, uint8_t noise, uint8_t glitch) {
   }
 }
 
+// --- Адаптивный пол шума (EMA) ---
+
+// обновление EMA: ema += (sample - ema) >> shift
+static inline uint16_t EmaUpdate(uint16_t ema, uint8_t sample, uint8_t shift) {
+  int16_t delta = (int16_t)(((uint16_t)sample << ADAP_EMA_SHIFT) - ema);
+  return ema + (delta >> shift);
+}
+
+static inline uint8_t EmaGet(uint16_t ema) {
+  return (uint8_t)(ema >> ADAP_EMA_SHIFT);
+}
+
+static void AdapFloor_Reset(void) {
+  afloor.count = 0;
+  afloor.prevRssi = 0;
+  afloor.prevNoise = 255;
+  afloor.prevGlitch = 255;
+  afloor.rssiEma = 0;
+  afloor.noiseEma = 0;
+  afloor.glitchEma = 0;
+}
+
+static void AdapFloor_UpdateEma(uint8_t rssi, uint8_t noise, uint8_t glitch) {
+  if (afloor.count == 0) {
+    // первый сэмпл — инициализация
+    afloor.rssiEma = (uint16_t)rssi << ADAP_EMA_SHIFT;
+    afloor.noiseEma = (uint16_t)noise << ADAP_EMA_SHIFT;
+    afloor.glitchEma = (uint16_t)glitch << ADAP_EMA_SHIFT;
+  } else {
+    // при прогреве быстрее, потом медленнее
+    uint8_t sh = (afloor.count < ADAP_MIN_SAMPLES) ? ADAP_WARMUP_SHIFT
+                                                    : ADAP_EMA_SHIFT;
+    afloor.rssiEma = EmaUpdate(afloor.rssiEma, rssi, sh);
+    afloor.noiseEma = EmaUpdate(afloor.noiseEma, noise, sh);
+    afloor.glitchEma = EmaUpdate(afloor.glitchEma, glitch, sh);
+  }
+  if (afloor.count < 255)
+    afloor.count++;
+}
+
+static bool AdaptiveSq_Check(uint8_t rssi, uint8_t noise, uint8_t glitch) {
+  // прогрев: набираем фон, пропускаем детекцию
+  if (afloor.count < ADAP_MIN_SAMPLES) {
+    AdapFloor_UpdateEma(rssi, noise, glitch);
+    afloor.prevRssi = rssi;
+    afloor.prevNoise = noise;
+    afloor.prevGlitch = glitch;
+    return false;
+  }
+
+  uint8_t floorR = EmaGet(afloor.rssiEma);
+  uint8_t floorN = EmaGet(afloor.noiseEma);
+  uint8_t floorG = EmaGet(afloor.glitchEma);
+
+  // 1) выше адаптивного пола?
+  bool above_floor = (rssi > floorR + FLOOR_MARGIN_RSSI) &&
+                     (noise + FLOOR_MARGIN_NOISE < floorN ||
+                      glitch + FLOOR_MARGIN_GLITCH < floorG);
+
+  // 2) резкий фронт относительно предыдущего шага?
+  int16_t dR = (int16_t)rssi - afloor.prevRssi;
+  int16_t dN = (int16_t)noise - afloor.prevNoise;
+  bool sharp_front = (dR > DELTA_RSSI_THRESH) && (dN < -DELTA_NOISE_THRESH);
+
+  afloor.prevRssi = rssi;
+  afloor.prevNoise = noise;
+  afloor.prevGlitch = glitch;
+
+  bool candidate = above_floor || sharp_front;
+
+  // EMA обновляем только фоном — кандидаты не загрязняют пол
+  if (!candidate)
+    AdapFloor_UpdateEma(rssi, noise, glitch);
+
+  return candidate;
+}
+
 static bool IsSkippable(uint32_t f) {
   if (gSettings.skipGarbageFrequencies && (f % GARBAGE_FREQ_STEP == 0))
     return true;
@@ -112,12 +211,21 @@ static void ApplyBandSettings(void) {
     gLastActiveLoot = NULL;
 }
 
+// сброс только prev, чтобы дельта не сработала ложно на стыке диапазонов
+// EMA сохраняем — адаптируется сама
+static void AdapFloor_SoftReset(void) {
+  afloor.prevRssi = 255;
+  afloor.prevNoise = 0;
+  afloor.prevGlitch = 0;
+}
+
 static void BeginScanRange(uint32_t start, uint32_t end, uint16_t step) {
   scan.startF = start;
   scan.endF = end;
   scan.currentF = start;
   scan.stepF = step;
   scan.cmdRangeActive = true;
+  AdapFloor_SoftReset();
   ChangeState(SCAN_STATE_TUNING);
 }
 
@@ -160,6 +268,7 @@ static void HandleEndOfRange(void) {
     ChangeState(SCAN_STATE_IDLE);
   } else {
     scan.currentF = scan.startF;
+    AdapFloor_SoftReset();
     ChangeState(SCAN_STATE_TUNING);
     SP_Begin();
   }
@@ -214,8 +323,8 @@ static void HandleStateTuning(void) {
     return;
   }
 
-  if (SoftSq_Check(scan.measurement.rssi, scan.measurement.noise,
-                   scan.measurement.glitch)) {
+  if (AdaptiveSq_Check(scan.measurement.rssi, scan.measurement.noise,
+                       scan.measurement.glitch)) {
     ChangeState(SCAN_STATE_CHECKING);
   } else {
     scan.measurement.open = false;
@@ -246,10 +355,15 @@ static void HandleStateChecking(void) {
 
     ChangeState(SCAN_STATE_LISTENING);
   } else {
+    // ложный кандидат — скормить в EMA, чтобы пол адаптировался к размазыванию
+    AdapFloor_UpdateEma(scan.measurement.rssi, scan.measurement.noise,
+                        scan.measurement.glitch);
     scan.currentF += scan.stepF;
     ChangeState(SCAN_STATE_TUNING);
   }
 }
+
+static uint32_t sqClosedAt = 0;
 
 static void HandleStateListening(void) {
   if (Now() - scan.radioTimer < SQL_DELAY)
@@ -263,18 +377,29 @@ static void HandleStateListening(void) {
     if (wasOpen) {
       STE_StartGate();
       RADIO_MuteAudioNow(gRadioState);
+      sqClosedAt = Now();
     } else {
       vfo->is_open = true;
       RADIO_SwitchAudioToVFO(gRadioState, gRadioState->active_vfo_index);
+      sqClosedAt = 0;
     }
     gRedrawScreen = true;
   }
 
-  uint32_t timeout = scan.isOpen ? SCAN_TIMEOUTS[gSettings.sqOpenedTimeout]
-                                 : SCAN_TIMEOUTS[gSettings.sqClosedTimeout];
-  if (ElapsedMs() >= timeout) {
+  bool shouldLeave;
+  if (scan.isOpen) {
+    // открыт: уходим по общему таймауту пребывания
+    shouldLeave = ElapsedMs() >= SCAN_TIMEOUTS[gSettings.sqOpenedTimeout];
+  } else {
+    // закрыт: уходим по времени с момента закрытия
+    shouldLeave = sqClosedAt &&
+                  (Now() - sqClosedAt >= SCAN_TIMEOUTS[gSettings.sqClosedTimeout]);
+  }
+
+  if (shouldLeave) {
     RADIO_MuteAudioNow(gRadioState);
     scan.currentF += scan.stepF;
+    sqClosedAt = 0;
     ChangeState(SCAN_STATE_TUNING);
     gRedrawScreen = true;
   }
@@ -301,7 +426,9 @@ void SCAN_Check(void) {
   if (scan.mode == SCAN_MODE_NONE)
     return;
 
-  RADIO_UpdateMultiwatch(gRadioState);
+  // мультивотч только в SINGLE — при активном сканировании он конфликтует с радио
+  if (scan.mode == SCAN_MODE_SINGLE)
+    RADIO_UpdateMultiwatch(gRadioState);
 
   if (scan.mode == SCAN_MODE_SINGLE) {
     HandleModeSingle();
@@ -357,6 +484,7 @@ void SCAN_Init(void) {
   scan.scanCycles = 0;
   scan.currentCps = 0;
   scan.radioTimer = Now();
+  AdapFloor_Reset();
 
   ApplyBandSettings();
   vfo->is_open = false;

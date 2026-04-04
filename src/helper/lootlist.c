@@ -14,6 +14,8 @@ static int16_t lootIndex = -1;
 
 Loot *gLastActiveLoot = NULL;
 int16_t gLastActiveLootIndex = -1;
+static uint32_t lastActiveLootF =
+    0; // частота для восстановления указателя после сортировки
 
 void LOOT_BlacklistLast(void) {
   if (gLastActiveLoot) {
@@ -71,15 +73,24 @@ Loot *LOOT_AddEx(uint32_t f, bool reuse) {
 Loot *LOOT_Add(uint32_t f) { return LOOT_AddEx(f, true); }
 
 void LOOT_Remove(uint16_t i) {
-  if (LOOT_Size()) {
-    for (; i < LOOT_Size() - 1; ++i) {
-      loot[i] = loot[i + 1];
-    }
-    lootIndex--;
+  if (!LOOT_Size())
+    return;
+  if (gLastActiveLoot == &loot[i]) {
+    gLastActiveLoot = NULL;
+    gLastActiveLootIndex = -1;
+    lastActiveLootF = 0;
   }
+  for (; i < LOOT_Size() - 1; ++i)
+    loot[i] = loot[i + 1];
+  lootIndex--;
 }
 
-void LOOT_Clear(void) { lootIndex = -1; }
+void LOOT_Clear(void) {
+  lootIndex = -1;
+  gLastActiveLoot = NULL;
+  gLastActiveLootIndex = -1;
+  lastActiveLootF = 0;
+}
 
 uint16_t LOOT_Size(void) { return lootIndex + 1; }
 
@@ -129,6 +140,11 @@ static void Sort(Loot *items, uint16_t n,
 
 void LOOT_Sort(bool (*compare)(const Loot *a, const Loot *b), bool reverse) {
   Sort(loot, LOOT_Size(), compare, reverse);
+  // После сортировки указатель мог сместиться — восстанавливаем по частоте
+  if (lastActiveLootF) {
+    gLastActiveLoot = LOOT_Get(lastActiveLootF);
+    gLastActiveLootIndex = gLastActiveLoot ? LOOT_IndexOf(gLastActiveLoot) : -1;
+  }
 }
 
 Loot *LOOT_Item(uint16_t i) { return &loot[i]; }
@@ -161,6 +177,7 @@ void LOOT_UpdateEx(Loot *item, Measurement *msm) {
     item->duration += Now() - lastTimeCheck;
     gLastActiveLoot = item;
     gLastActiveLootIndex = LOOT_IndexOf(item);
+    lastActiveLootF = item->f;
   }
   if (msm->open) {
     item->lastTimeOpen = Now();
