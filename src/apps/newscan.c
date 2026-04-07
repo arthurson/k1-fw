@@ -257,10 +257,10 @@ static void updateListening(void) {
   static uint32_t lastListenUpdate;
   if (Now() - lastListenUpdate >= SQL_DELAY) {
     measure();
-    if (gMonitorMode) {
+    /* if (gMonitorMode) {
       SP_ShiftGraph(-1);
       SP_AddGraphPoint(msm);
-    }
+    } */
     lastListenUpdate = Now();
   }
 }
@@ -345,10 +345,11 @@ static void renderPeakMarker(VMinMax v) {
   if (!rssi)
     return;
 
-  SP_RenderMarker(SP_FindPeakX(), v);
+  // SP_RenderMarker(SP_FindPeakX(), v);
+  SP_RenderArrow(f);
 
-  FSmall(LCD_XCENTER, 12, POS_C, f);
-  PrintSmallEx(LCD_XCENTER, 12 + 6, POS_C, C_FILL, "%ddBm", Rssi2DBm(rssi));
+  FSmall(0, 12 + 6, POS_L, f);
+  PrintSmallEx(0, 12 + 6 + 6, POS_L, C_FILL, "%ddBm", Rssi2DBm(rssi));
 }
 
 static void renderStillInfo(void) {
@@ -382,11 +383,12 @@ void NEWSCAN_render(void) {
     if (gMonitorMode) {
       // скроллинг-граф как в vfo1
       const uint8_t gBase = 22;
-      SPECTRUM_Y = gBase;
-      SPECTRUM_H = LCD_HEIGHT - gBase - 8;
-      SP_RenderGraph(DBm2Rssi(-120), DBm2Rssi(-50));
-      SPECTRUM_Y = 8;
-      SPECTRUM_H = 44;
+      /* SPECTRUM_Y = gBase;
+      SPECTRUM_H = LCD_HEIGHT - gBase - 8; */
+      // SP_RenderGraph(DBm2Rssi(-120), DBm2Rssi(-50));
+      UI_RSSIBar(12 + 7);
+      /* SPECTRUM_Y = 8;
+      SPECTRUM_H = 44; */
     }
     renderStillInfo();
   } else {
