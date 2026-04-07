@@ -272,7 +272,8 @@ static void updateScan(void) {
   SYSTICK_DelayUs(delay);
 
   measure();
-  SP_AddPoint(msm);
+  if (!still)
+    SP_AddPoint(msm);
   LOOT_Update(msm);
 
   if (still)
