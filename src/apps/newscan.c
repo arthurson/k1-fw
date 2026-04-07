@@ -13,41 +13,23 @@
 #include "apps.h"
 #include <stdbool.h>
 
-// отладка шумодава (на одной частоте?)
-// анализ эфира
-// прослушивание в любом режиме через still
-
-typedef enum {
-  AM_ANALYZER,
-  AM_SCAN,
-  AM_SQ,
-
-  AM_COUNT,
-} AnalyzerMode;
-
-static AnalyzerMode mode;
-static const char *AM_NAMES[] = {
-    [AM_ANALYZER] = "ANALYZER",
-    [AM_SCAN] = "SCAN",
-    [AM_SQ] = "SQ",
-};
-
 static Band range;
-static VMinMax minMax;
 
-static uint32_t targetF = 434 * MHZ;
+static uint32_t targetF;
 static uint32_t delay = 1200;
-static uint8_t stp = 10;
-static SQL sq;
+
 static bool still;
 static bool listen;
 
-static Measurement *msm;
-static Measurement tgt[3];
+// sq настройка
+static SQL sq;
+static uint8_t sqStp = 10; // шаг настройки
+static bool showSqTuner;   // режим настройки sq
 
+static Measurement *msm;
 static uint32_t cursorRangeTimeout = 0;
 
-static void setTargetF(uint32_t fs, uint32_t _) { targetF = fs; }
+// -------------------------------------------------------------------------
 
 static void setRange(uint32_t fs, uint32_t fe) {
   range.step = RADIO_GetParam(ctx, PARAM_STEP);
@@ -59,43 +41,40 @@ static void setRange(uint32_t fs, uint32_t fe) {
   BANDS_RangePush(range);
 }
 
-bool sqModeKey(KEY_Code_t key, Key_State_t state) {
+static void lockToPeak(void) {
+  uint32_t f = SP_GetPeakF();
+  if (!f)
+    return;
+  still = true;
+  targetF = f;
+  msm->f = f;
+  RADIO_SetParam(ctx, PARAM_FREQUENCY, f, false);
+  RADIO_ApplySettings(ctx);
+}
+
+// -------------------------------------------------------------------------
+// Обработчики клавиш
+
+static bool sqTunerKey(KEY_Code_t key, Key_State_t state) {
   switch (key) {
-  case KEY_6:
-    FINPUT_setup(0, BK4819_F_MAX, UNIT_MHZ, false);
-    FINPUT_Show(setTargetF);
-    return true;
-
-  case KEY_SIDE1:
-    LOOT_BlacklistLast();
-    return true;
-
-  case KEY_SIDE2:
-    LOOT_WhitelistLast();
-    return true;
-
-  case KEY_4:
-    still = !still;
-    return true;
-
   case KEY_1:
   case KEY_7:
-    sq.ro = AdjustU(sq.ro, 0, 255, key == KEY_1 ? stp : -stp);
+    sq.ro = AdjustU(sq.ro, 0, 255, key == KEY_1 ? sqStp : -(int32_t)sqStp);
+    sq.rc = sq.ro > 4 ? sq.ro - 4 : 0;
     return true;
   case KEY_2:
   case KEY_8:
-    sq.no = AdjustU(sq.no, 0, 255, key == KEY_2 ? stp : -stp);
+    // no: меньше → жёстче, KEY_2 ужесточает (уменьшает)
+    sq.no = AdjustU(sq.no, 0, 255, key == KEY_2 ? -(int32_t)sqStp : sqStp);
+    sq.nc = sq.no + 4;
     return true;
   case KEY_3:
   case KEY_9:
-    sq.go = AdjustU(sq.go, 0, 255, key == KEY_3 ? stp : -stp);
+    sq.go = AdjustU(sq.go, 0, 255, key == KEY_3 ? -(int32_t)sqStp : sqStp);
+    sq.gc = sq.go + 4;
     return true;
   case KEY_0:
-    if (stp == 100) {
-      stp = 1;
-    } else {
-      stp *= 10;
-    }
+    sqStp = (sqStp >= 100) ? 1 : sqStp * 10;
     return true;
   default:
     break;
@@ -103,21 +82,21 @@ bool sqModeKey(KEY_Code_t key, Key_State_t state) {
   return false;
 }
 
-bool scanModeKey(KEY_Code_t key, Key_State_t state) {
+static bool stillModeKey(KEY_Code_t key, Key_State_t state) {
   switch (key) {
-
   case KEY_SIDE1:
-    LOOT_BlacklistLast();
+    gMonitorMode = !gMonitorMode;
     return true;
-
-  case KEY_SIDE2:
-    LOOT_WhitelistLast();
+  case KEY_UP:
+  case KEY_DOWN: {
+    uint32_t step = StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)];
+    int32_t dir = ((key == KEY_UP) ^ gSettings.invertButtons) ? 1 : -1;
+    targetF = msm->f = AdjustU(RADIO_GetParam(ctx, PARAM_FREQUENCY),
+                               range.start, range.end, step * dir);
+    RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
+    RADIO_ApplySettings(ctx);
     return true;
-
-  case KEY_STAR:
-    APPS_run(APP_LOOTLIST);
-    return true;
-
+  }
   case KEY_1:
   case KEY_7:
     delay = AdjustU(delay, 0, 10000,
@@ -129,7 +108,7 @@ bool scanModeKey(KEY_Code_t key, Key_State_t state) {
   return false;
 }
 
-bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
+static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
   uint32_t step = StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)];
   switch (key) {
   case KEY_UP:
@@ -137,86 +116,79 @@ bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     CUR_Move((key == KEY_UP) ^ gSettings.invertButtons);
     cursorRangeTimeout = Now() + 2000;
     return true;
+
   case KEY_1:
   case KEY_7:
     delay = AdjustU(delay, 0, 10000, key == KEY_1 ? 100 : -100);
     return true;
-  case KEY_2:
+
+  case KEY_2: // zoom in по выделению курсора
     BANDS_RangePush(CUR_GetRange(BANDS_RangePeek(), step));
     range = *BANDS_RangePeek();
     CUR_Reset();
     return true;
 
-  case KEY_4:
-    still = !still;
-    if (still) {
-      targetF =
-          CUR_GetCenterF(StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)]);
-      msm->f = targetF;
-    }
-    return true;
-  case KEY_6:
-    listen = !listen;
-    if (listen) {
-      still = true;
-    }
-    if (still) {
-      targetF =
-          CUR_GetCenterF(StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)]);
-      msm->f = targetF;
-    }
-    return true;
-  case KEY_8:
+  case KEY_8: // zoom out
     BANDS_RangePop();
     range = *BANDS_RangePeek();
     CUR_Reset();
     return true;
+
   case KEY_3:
   case KEY_9:
     RADIO_IncDecParam(ctx, PARAM_STEP, key == KEY_3, false);
     range.step = RADIO_GetParam(ctx, PARAM_STEP);
     SP_Init(&range);
     return true;
-  }
-  return false;
-}
 
-bool stillModeKey(KEY_Code_t key, Key_State_t state) {
-  switch (key) {
-
-  case KEY_UP:
-  case KEY_DOWN:
-    targetF = msm->f =
-        AdjustU(RADIO_GetParam(ctx, PARAM_FREQUENCY), range.start, range.end,
-                StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)] *
-                    (((key == KEY_UP) ^ gSettings.invertButtons) ? 1 : -1));
-    RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
-    RADIO_ApplySettings(ctx);
+  case KEY_4: // still на позиции курсора
+    still = !still;
+    if (still) {
+      targetF = CUR_GetCenterF(step);
+      msm->f = targetF;
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
+      RADIO_ApplySettings(ctx);
+    }
     return true;
 
-  case KEY_1:
-  case KEY_7:
-    delay = AdjustU(delay, 0, 10000,
-                    ((key == KEY_1) ^ gSettings.invertButtons) ? 100 : -100);
+  case KEY_6: // lock to peak
+    lockToPeak();
     return true;
-  default:
-    break;
+
+  case KEY_SIDE1:
+    LOOT_BlacklistLast();
+    return true;
+  case KEY_SIDE2:
+    LOOT_WhitelistLast();
+    return true;
+  case KEY_STAR:
+    APPS_run(APP_LOOTLIST);
+    return true;
   }
   return false;
 }
 
 bool NEWSCAN_key(KEY_Code_t key, Key_State_t state) {
-  if (REGSMENU_Key(key, state)) {
+  if (REGSMENU_Key(key, state))
     return true;
-  }
+
   if (state == KEY_RELEASED) {
-    if (key == KEY_EXIT && (listen || still)) {
-      listen = false;
-      still = false;
-      return true;
+    if (key == KEY_EXIT) {
+      if (listen) {
+        listen = false;
+        return true;
+      }
+      if (still) {
+        still = false;
+        return true;
+      }
+      if (showSqTuner) {
+        showSqTuner = false;
+        return true;
+      }
     }
     if (key == KEY_F) {
-      mode = IncDecU(mode, 0, AM_COUNT, true);
+      showSqTuner = !showSqTuner;
       return true;
     }
     if (key == KEY_5) {
@@ -225,23 +197,20 @@ bool NEWSCAN_key(KEY_Code_t key, Key_State_t state) {
       return true;
     }
   }
-  if (state == KEY_RELEASED || state == KEY_LONG_PRESSED_CONT) {
-    if (still && stillModeKey(key, state)) {
+
+  if (state == KEY_RELEASED || state == KEY_LONG_PRESSED ||
+      state == KEY_LONG_PRESSED_CONT) {
+    if (showSqTuner && sqTunerKey(key, state))
       return true;
-    }
-    switch (mode) {
-    case AM_SCAN:
-      return scanModeKey(key, state);
-    case AM_SQ:
-      return sqModeKey(key, state);
-    case AM_ANALYZER:
+    if (still && stillModeKey(key, state))
+      return true;
+    if (!still)
       return analyzerModeKey(key, state);
-    default:
-      break;
-    }
   }
   return false;
 }
+
+// -------------------------------------------------------------------------
 
 void NEWSCAN_init(void) {
   SPECTRUM_Y = 8;
@@ -250,10 +219,12 @@ void NEWSCAN_init(void) {
   range.step = RADIO_GetParam(ctx, PARAM_STEP);
   range.start = 43307500;
   range.end = range.start + StepFrequencyTable[range.step] * LCD_WIDTH;
+
   msm = &vfo->msm;
   msm->f = range.start;
 
-  sq = GetSql(9);
+  targetF = range.start;
+  sq = GetSql(5); // начальный уровень шумодава
 
   SCAN_SetMode(SCAN_MODE_NONE);
   SP_Init(&range);
@@ -262,42 +233,39 @@ void NEWSCAN_init(void) {
 
 void NEWSCAN_deinit(void) {}
 
-void measure() {
+// -------------------------------------------------------------------------
+
+static void measure(void) {
   msm->rssi = RADIO_GetRSSI(ctx);
   msm->noise = RADIO_GetNoise(ctx);
   msm->glitch = RADIO_GetGlitch(ctx);
 
   if (listen) {
     msm->open = true;
-  } else if (mode == AM_ANALYZER) {
-    msm->open = false;
   } else {
-    msm->open = msm->rssi >= sq.ro && msm->noise < sq.no && msm->glitch < sq.go;
+    // программный шумодав по R/N/G
+    msm->open =
+        (msm->rssi >= sq.ro) && (msm->noise < sq.no) && (msm->glitch < sq.go);
+  }
+  if (gMonitorMode) {
+    msm->open = true;
   }
   LOOT_Update(msm);
-
-  if (mode == AM_SQ) {
-    if (msm->f == targetF - StepFrequencyTable[range.step]) {
-      tgt[0] = *msm;
-    }
-    if (msm->f == targetF) {
-      tgt[1] = *msm;
-    }
-    if (msm->f == targetF + StepFrequencyTable[range.step]) {
-      tgt[2] = *msm;
-    }
-  }
 }
 
-void updateListening() {
+static void updateListening(void) {
   static uint32_t lastListenUpdate;
   if (Now() - lastListenUpdate >= SQL_DELAY) {
     measure();
+    if (gMonitorMode) {
+      SP_ShiftGraph(-1);
+      SP_AddGraphPoint(msm);
+    }
     lastListenUpdate = Now();
   }
 }
 
-void updateScan() {
+static void updateScan(void) {
   RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
   RADIO_SetParam(ctx, PARAM_FREQUENCY, msm->f, false);
   RADIO_ApplySettings(ctx);
@@ -307,9 +275,8 @@ void updateScan() {
   SP_AddPoint(msm);
   LOOT_Update(msm);
 
-  if (still) {
+  if (still)
     return;
-  }
 
   msm->f += StepFrequencyTable[range.step];
 
@@ -326,103 +293,111 @@ void NEWSCAN_update(void) {
   } else {
     updateScan();
   }
+
+  // триггер: шумодав открылся во время скана → залипаем на частоте
+  if (!still && !listen && msm->open) {
+    still = true;
+    listen = true;
+    targetF = msm->f;
+    RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
+    RADIO_ApplySettings(ctx);
+  }
+
   if (vfo->is_open != msm->open) {
-    // Log("OPEN=%u", msm->open);
     vfo->is_open = msm->open;
     gRedrawScreen = true;
-    targetF = msm->f;
+    if (msm->open) {
+      targetF = msm->f;
+    }
     RADIO_SwitchAudioToVFO(gRadioState, gRadioState->active_vfo_index);
   }
 }
 
-static void renderBottomFreq() {
-  uint32_t step = StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)];
-  Band r = CUR_GetRange(&range, step);
-  bool showCurRange = (Now() < cursorRangeTimeout);
+// -------------------------------------------------------------------------
 
-  uint32_t leftF = showCurRange ? r.start : range.start;
-  uint32_t centerF = showCurRange ? CUR_GetCenterF(step)
-                                  : RADIO_GetParam(ctx, PARAM_FREQUENCY);
-  uint32_t rightF = showCurRange ? r.end : range.end;
+static void renderBottomFreq(void) {
+  uint32_t step = StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)];
+  bool showCur = (Now() < cursorRangeTimeout);
+  Band r = CUR_GetRange(&range, step);
+
+  uint32_t leftF = showCur ? r.start : range.start;
+  uint32_t centerF =
+      showCur ? CUR_GetCenterF(step) : RADIO_GetParam(ctx, PARAM_FREQUENCY);
+  uint32_t rightF = showCur ? r.end : range.end;
 
   FSmall(1, LCD_HEIGHT - 2, POS_L, leftF);
   FSmall(LCD_XCENTER, LCD_HEIGHT - 2, POS_C, centerF);
   FSmall(LCD_WIDTH - 1, LCD_HEIGHT - 2, POS_R, rightF);
 }
 
-void renderSqMode() {
-  PrintSmall(0, 12 + 6 * 0, "R %u", sq.ro);
-  PrintSmall(0, 12 + 6 * 1, "N %u", sq.no);
-  PrintSmall(0, 12 + 6 * 2, "G %u", sq.go);
-  PrintSmall(0, 12 + 6 * 3, "STP %u", stp);
+static void renderSqTuner(void) {
+  // правая колонка под шагом
+  PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 0, POS_R, C_FILL, "R>=%u", sq.ro);
+  PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 1, POS_R, C_FILL, "N< %u", sq.no);
+  PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 2, POS_R, C_FILL, "G< %u", sq.go);
+  PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 3, POS_R, C_FILL, "s=%u", sqStp);
 }
 
-void renderRNGMode() {
-  PrintSmallEx(LCD_XCENTER, 12 + 6 * 0, POS_C, C_FILL, "%3u %3u %3u",
-               tgt[0].rssi, tgt[1].rssi, tgt[2].rssi);
-  PrintSmallEx(LCD_XCENTER, 12 + 6 * 1, POS_C, C_FILL, "%3u %3u %3u",
-               tgt[0].noise, tgt[1].noise, tgt[2].noise);
-  PrintSmallEx(LCD_XCENTER, 12 + 6 * 2, POS_C, C_FILL, "%3u %3u %3u",
-               tgt[0].glitch, tgt[1].glitch, tgt[2].glitch);
+static void renderPeakMarker(VMinMax v) {
+  uint32_t f = SP_GetPeakF();
+  uint16_t rssi = SP_GetPeakRssi();
+  if (!rssi)
+    return;
+
+  SP_RenderMarker(SP_FindPeakX(), v);
+
+  FSmall(LCD_XCENTER, 12, POS_C, f);
+  PrintSmallEx(LCD_XCENTER, 12 + 6, POS_C, C_FILL, "%ddBm", Rssi2DBm(rssi));
 }
 
-void renderMinMax() {
-  PrintSmallEx(0, 12 + 6 * 1, POS_L, C_FILL, "%u", SP_GetRssiMax());
-  PrintSmallEx(0, 12 + 6 * 2, POS_L, C_FILL, "%u", SP_GetNoiseFloor());
-}
+static void renderStillInfo(void) {
+  SP_RenderArrow(RADIO_GetParam(ctx, PARAM_FREQUENCY));
+  PrintMediumEx(LCD_XCENTER, 14, POS_C, C_FILL,
+                RADIO_GetParamValueString(ctx, PARAM_FREQUENCY));
 
-void renderSpectrum() {
-  SP_Render(&range, SP_GetMinMax());
-  renderBottomFreq();
-}
+  // R N G текущего измерения на маркерной частоте
+  PrintSmallEx(LCD_XCENTER, 12 + 6 * 2, POS_C, C_FILL, "R%u N%u G%u", msm->rssi,
+               msm->noise, msm->glitch);
 
-void renderScanMode() { PrintSmallEx(0, 12, POS_L, C_FILL, "%uus", delay); }
-
-void renderStillMode() {
-  PrintSmallEx(LCD_XCENTER, 12 + 6 * 3, POS_C, C_FILL, "%s", "STILL");
+  if (listen)
+    PrintSmallEx(LCD_XCENTER, 12 + 6 * 3, POS_C, C_FILL, "LISTEN");
+  else
+    PrintSmallEx(LCD_XCENTER, 12 + 6 * 3, POS_C, C_FILL, "STILL");
 }
 
 void NEWSCAN_render(void) {
   STATUSLINE_RenderRadioSettings();
 
-  renderSpectrum();
+  VMinMax v = SP_GetMinMax();
+  SP_Render(&range, v);
+  renderBottomFreq();
 
-  PrintSmallEx(LCD_WIDTH - 1, 12 + 6 * 2, POS_R, C_FILL, "%s", AM_NAMES[mode]);
-  if (listen) {
-    PrintSmallEx(LCD_XCENTER, 12 + 6 * 2, POS_C, C_FILL, "LISTEN MODE");
-  }
+  // задержка и шаг слева/справа
+  PrintSmallEx(0, 12, POS_L, C_FILL, "%uus", delay);
+  PrintSmallEx(LCD_WIDTH - 1, 12, POS_R, C_FILL, "%s",
+               RADIO_GetParamValueString(ctx, PARAM_STEP));
 
   if (still || listen) {
-    renderStillMode();
-    SP_RenderArrow(RADIO_GetParam(ctx, PARAM_FREQUENCY));
-    PrintMediumEx(LCD_XCENTER, 14, POS_C, C_FILL,
-                  RADIO_GetParamValueString(ctx, PARAM_FREQUENCY));
+    if (gMonitorMode) {
+      // скроллинг-граф как в vfo1
+      const uint8_t gBase = 22;
+      SPECTRUM_Y = gBase;
+      SPECTRUM_H = LCD_HEIGHT - gBase - 8;
+      SP_RenderGraph(DBm2Rssi(-120), DBm2Rssi(-50));
+      SPECTRUM_Y = 8;
+      SPECTRUM_H = 44;
+    }
+    renderStillInfo();
+  } else {
+    // маркер пика всегда виден в режиме сканирования
+    renderPeakMarker(v);
+    CUR_Render();
+    if (gLastActiveLoot)
+      UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, 14, POS_C);
   }
 
-  switch (mode) {
-  case AM_ANALYZER:
-    if (!still) {
-      CUR_Render();
-    }
-    renderMinMax();
-    renderScanMode();
-    PrintSmallEx(LCD_WIDTH - 1, 12 + 6 * 0, POS_R, C_FILL, "%s",
-                 RADIO_GetParamValueString(ctx, PARAM_STEP));
-    break;
-  case AM_SCAN:
-    renderScanMode();
-    if (gLastActiveLoot) {
-      UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, 14, POS_C);
-    }
-    break;
-  case AM_SQ:
-    renderSqMode();
-    renderRNGMode();
-    SP_RenderArrow(targetF);
-    break;
-  default:
-    break;
-  }
+  if (showSqTuner)
+    renderSqTuner();
 
   REGSMENU_Draw();
 }
