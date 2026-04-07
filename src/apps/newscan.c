@@ -122,15 +122,24 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     delay = AdjustU(delay, 0, 10000, key == KEY_1 ? 100 : -100);
     return true;
 
-  case KEY_2: // zoom in по выделению курсора
-    BANDS_RangePush(CUR_GetRange(BANDS_RangePeek(), step));
+  case KEY_2: { // zoom in по выделению курсора
+    Band zoomed = CUR_GetRange(BANDS_RangePeek(), step);
+    zoomed.step = RADIO_GetParam(ctx, PARAM_STEP); // берём текущий шаг
+    BANDS_RangePush(zoomed);
     range = *BANDS_RangePeek();
+    msm->f = range.start;
+    SP_Init(&range);
     CUR_Reset();
     return true;
+  }
 
   case KEY_8: // zoom out
     BANDS_RangePop();
     range = *BANDS_RangePeek();
+    RADIO_SetParam(ctx, PARAM_STEP, range.step,
+                   true); // восстанавливаем шаг родителя
+    msm->f = range.start;
+    SP_Init(&range);
     CUR_Reset();
     return true;
 
@@ -138,6 +147,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
   case KEY_9:
     RADIO_IncDecParam(ctx, PARAM_STEP, key == KEY_3, false);
     range.step = RADIO_GetParam(ctx, PARAM_STEP);
+    BANDS_RangePeek()->step = range.step; // синхронизируем стек
     SP_Init(&range);
     return true;
 
@@ -345,11 +355,10 @@ static void renderPeakMarker(VMinMax v) {
   if (!rssi)
     return;
 
-  // SP_RenderMarker(SP_FindPeakX(), v);
-  SP_RenderArrow(f);
+  SP_RenderMarker(SP_FindPeakX(), v);
 
-  FSmall(0, 12 + 6, POS_L, f);
-  PrintSmallEx(0, 12 + 6 + 6, POS_L, C_FILL, "%ddBm", Rssi2DBm(rssi));
+  FSmall(LCD_XCENTER, 12, POS_C, f);
+  PrintSmallEx(LCD_XCENTER, 12 + 6, POS_C, C_FILL, "%ddBm", Rssi2DBm(rssi));
 }
 
 static void renderStillInfo(void) {
@@ -382,13 +391,14 @@ void NEWSCAN_render(void) {
   if (still || listen) {
     if (gMonitorMode) {
       // скроллинг-граф как в vfo1
-      const uint8_t gBase = 22;
-      /* SPECTRUM_Y = gBase;
-      SPECTRUM_H = LCD_HEIGHT - gBase - 8; */
-      // SP_RenderGraph(DBm2Rssi(-120), DBm2Rssi(-50));
-      UI_RSSIBar(12 + 7);
-      /* SPECTRUM_Y = 8;
+      /* const uint8_t gBase = 22;
+      SPECTRUM_Y = gBase;
+      SPECTRUM_H = LCD_HEIGHT - gBase - 8;
+      SP_RenderGraph(DBm2Rssi(-120), DBm2Rssi(-50));
+      SPECTRUM_Y = 8;
       SPECTRUM_H = 44; */
+
+      UI_RSSIBar(24);
     }
     renderStillInfo();
   } else {

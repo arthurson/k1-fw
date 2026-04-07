@@ -79,7 +79,8 @@ uint8_t SP_F2X(uint32_t f) {
   if (f >= range->end)   return MAX_POINTS - 1;
   uint32_t delta  = f - range->start;
   uint32_t aRange = range->end - range->start;
-  return (uint8_t)((delta * (MAX_POINTS - 1) + aRange / 2) / aRange);
+  // uint64 чтобы delta*(MAX_POINTS-1) не переполнял на больших диапазонах
+  return (uint8_t)(((uint64_t)delta * (MAX_POINTS - 1) + aRange / 2) / aRange);
 }
 
 uint32_t SP_X2F(uint8_t xi) {
