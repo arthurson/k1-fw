@@ -7,7 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define SQL_DELAY 30
+#define SQL_DELAY 50
 
 extern const char *PARAM_NAMES[];
 extern const char *TX_STATE_NAMES[7];
