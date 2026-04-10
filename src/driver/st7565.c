@@ -148,11 +148,6 @@ void ST7565_ForceFullRedraw(void) {
 // Blit — O(FRAME_LINES), никакого memcmp / checksum
 // ---------------------------------------------------------------------------
 void ST7565_Blit(void) {
-  // Не передаём SPI при открытом шумодаве — это вызывает щелчки в приёмнике
-  if (gSuppressDisplayUpdates) {
-    return;
-  }
-
   bool any = false;
   for (uint8_t l = 0; l < FRAME_LINES; l++) {
     if (gLineChanged[l]) {
