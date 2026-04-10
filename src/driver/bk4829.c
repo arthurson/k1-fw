@@ -11,12 +11,16 @@
 
 static uint16_t reg30state = 0xffff;
 
+// 40 NOP вместо 25 — мягкие фронты bit-bang SPI, меньше RF помех
 #define SHORT_DELAY()                                                          \
   __asm volatile("nop\n nop\n nop\n nop\n nop\n"                               \
                  "nop\n nop\n nop\n nop\n nop\n"                               \
                  "nop\n nop\n nop\n nop\n nop\n"                               \
                  "nop\n nop\n nop\n nop\n nop\n"                               \
-                 "nop\n nop\n nop\n nop\n")
+                 "nop\n nop\n nop\n nop\n nop\n"                               \
+                 "nop\n nop\n nop\n nop\n nop\n"                               \
+                 "nop\n nop\n nop\n nop\n nop\n"                               \
+                 "nop\n nop\n nop\n nop\n nop\n")
 
 // void SHORT_DELAY() { SYSTICK_DelayUs(1); }
 

@@ -7,7 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define SQL_DELAY 90
+#define SQL_DELAY 150  // Увеличено с 90 — реже опрашиваем регистры, меньше SPI шума
 
 extern const char *PARAM_NAMES[];
 extern const char *TX_STATE_NAMES[7];
