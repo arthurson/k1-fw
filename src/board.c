@@ -96,10 +96,9 @@ void BOARD_GPIO_Init(void) {
   LL_GPIO_StructInit(&InitStruct);
   InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
   InitStruct.Pull = LL_GPIO_PULL_UP;
-  InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
 
   // --- Input pins ---
-
+  InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;  // Для входов скорость не важна
   InitStruct.Mode = LL_GPIO_MODE_INPUT;
 
   // Keypad rows: PB12–PB15
@@ -111,12 +110,12 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pin = LL_GPIO_PIN_10;
   LL_GPIO_Init(GPIOB, &InitStruct);
 
-  // --- Output pins ---
+  // --- Output pins (LOW speed для снижения RF помех) ---
+  InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
+  InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
 
   LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6); // LCD A0
   LL_GPIO_SetOutputPin(GPIOB, LL_GPIO_PIN_2); // LCD CS
-
-  InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
 
   // Keypad cols: PB3–PB6
   InitStruct.Pin =
@@ -127,10 +126,6 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pin = LL_GPIO_PIN_8 | LL_GPIO_PIN_6 | LL_GPIO_PIN_3;
   LL_GPIO_Init(GPIOA, &InitStruct);
 
-  // BK4829 SCK: PB8 | BK4829 SDA: PB9 | LCD CS: PB2
-  InitStruct.Pin = LL_GPIO_PIN_9 | LL_GPIO_PIN_8 | LL_GPIO_PIN_2;
-  LL_GPIO_Init(GPIOB, &InitStruct);
-
   // Flashlight: PC13
   InitStruct.Pin = LL_GPIO_PIN_13;
   LL_GPIO_Init(GPIOC, &InitStruct);
@@ -139,8 +134,17 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pin = LL_GPIO_PIN_6 | LL_GPIO_PIN_5;
   LL_GPIO_Init(GPIOF, &InitStruct);
 
-  // Backlight: PF8 | BK4819 CS: PF9
+  // Backlight: PF8
+  InitStruct.Pin = LL_GPIO_PIN_8;
+  LL_GPIO_Init(GPIOF, &InitStruct);
+
+  // --- BK4829 pins — VERY_HIGH (bit-bang SPI требует быстрой смены) ---
+  InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
+  // BK4829 SCK: PB8 | BK4829 SDA: PB9 | BK4819 CS: PF9 | LCD CS: PB2
   InitStruct.Pin = LL_GPIO_PIN_9 | LL_GPIO_PIN_8;
+  LL_GPIO_Init(GPIOB, &InitStruct);
+
+  InitStruct.Pin = LL_GPIO_PIN_9;
   LL_GPIO_Init(GPIOF, &InitStruct);
 
   // ADC inputs (analog): PB0, PB1

@@ -18,6 +18,7 @@
 uint8_t gFrameBuffer[FRAME_LINES][LCD_WIDTH];
 bool gLineChanged[FRAME_LINES]; // выставляется в graphics.c примитивами
 bool gRedrawScreen = true;
+bool gSuppressDisplayUpdates = false; // подавление обновлей дисплея
 
 // ---------------------------------------------------------------------------
 // SPI
@@ -32,7 +33,8 @@ static void SPI_Init(void) {
   InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
   InitStruct.Alternate = LL_GPIO_AF0_SPI1;
   InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
-  InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
+  // LOW вместо VERY_HIGH — снижаем RF помехи (SPI и так 750 kHz)
+  InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
 
   InitStruct.Pin = LL_GPIO_PIN_5;
   InitStruct.Pull = LL_GPIO_PULL_UP;
@@ -52,7 +54,8 @@ static void SPI_Init(void) {
   SPI_InitStruct.NSS = LL_SPI_NSS_SOFT;
   SPI_InitStruct.BitOrder = LL_SPI_MSB_FIRST;
   SPI_InitStruct.CRCCalculation = LL_SPI_CRCCALCULATION_DISABLE;
-  SPI_InitStruct.BaudRate = LL_SPI_BAUDRATEPRESCALER_DIV32;
+  // DIV64 вместо DIV32 — снижаем RF помехи от SPI
+  SPI_InitStruct.BaudRate = LL_SPI_BAUDRATEPRESCALER_DIV64;
   LL_SPI_Init(SPIx, &SPI_InitStruct);
 
   LL_SPI_Enable(SPIx);

@@ -14,7 +14,8 @@
 #include "misc.h"
 #endif
 
-#define PWM_FREQ 25000
+// 100 kHz вместо 25 kHz — сдвигаем гармоники PWM выше RF диапазона
+#define PWM_FREQ 100000
 #define DUTY_CYCLE_LEVELS 64
 
 #define DUTY_CYCLE_ON_VALUE GPIO_PIN_MASK(GPIO_PIN_BACKLIGHT)

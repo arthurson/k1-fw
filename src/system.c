@@ -49,6 +49,11 @@ static uint32_t backlightTimer;
 static uint32_t appsKeyboardTimer;
 
 static void appRender(void) {
+  // Подавляем все обновления дисплея (FC режим при открытом шумодаве)
+  if (gSuppressDisplayUpdates) {
+    return;
+  }
+
   if (!gRedrawScreen || Now() - gLastRender < 32) {
     return;
   }
@@ -538,7 +543,8 @@ void SYS_Main(void) {
       TOAST_Update();
       toastTimer = Now();
     }
-    if (Now() - appsKeyboardTimer >= 1) {
+    if (Now() - appsKeyboardTimer >= 5) {
+      // 5 мс вместо 1 мс — снижаем RF помехи от сканирования клавиатуры
       keyboard_tick_1ms();
       appsKeyboardTimer = Now();
     }

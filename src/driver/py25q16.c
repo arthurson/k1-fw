@@ -46,7 +46,8 @@ static void SPI_Init() {
     LL_GPIO_InitTypeDef InitStruct;
     LL_GPIO_StructInit(&InitStruct);
     InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
-    InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
+    // MEDIUM вместо VERY_HIGH — снижаем RF помехи от SPI2 flash
+    InitStruct.Speed = LL_GPIO_SPEED_FREQ_MEDIUM;
     InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
     InitStruct.Pull = LL_GPIO_PULL_UP;
 
@@ -72,7 +73,8 @@ static void SPI_Init() {
   InitStruct.TransferDirection = LL_SPI_FULL_DUPLEX;
   InitStruct.ClockPhase = LL_SPI_PHASE_2EDGE;
   InitStruct.ClockPolarity = LL_SPI_POLARITY_HIGH;
-  InitStruct.BaudRate = LL_SPI_BAUDRATEPRESCALER_DIV2;
+  // DIV8 вместо DIV2 — снижаем RF помехи (24 MHz → 6 MHz)
+  InitStruct.BaudRate = LL_SPI_BAUDRATEPRESCALER_DIV8;
   InitStruct.BitOrder = LL_SPI_MSB_FIRST;
   InitStruct.NSS = LL_SPI_NSS_SOFT;
   InitStruct.CRCCalculation = LL_SPI_CRCCALCULATION_DISABLE;

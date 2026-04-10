@@ -1,5 +1,6 @@
 #include "fc.h"
 #include "../dcs.h"
+#include "../driver/st7565.h"
 #include "../driver/systick.h"
 #include "../driver/uart.h"
 #include "../helper/lootlist.h"
@@ -161,6 +162,7 @@ void FC_init(void) {
   pendingScanRestart = false;
   lastScreenUpdate = 0;
   lastSquelchOpen = false;
+  gSuppressDisplayUpdates = false; // Разрешаем обновления при старте
   // Гарантируем, что первая проверка шумодава не сработает мгновенно
   fcListenTimer = Now() + FC_SQUELCH_SETTLE_MS;
   SCAN_SetMode(SCAN_MODE_NONE);
@@ -203,6 +205,9 @@ void FC_update(void) {
     }
 
     RADIO_UpdateSquelch(gRadioState);
+
+    // Подавляем обновления дисплея при открытом шумодаве — SPI создаёт помехи
+    gSuppressDisplayUpdates = vfo->is_open;
 
     // Перерисовываем только при изменении состояния шумодава
     if (vfo->is_open != lastSquelchOpen) {
