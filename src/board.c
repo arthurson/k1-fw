@@ -179,47 +179,31 @@ void BOARD_ADC_Init(void) {
   LL_APB1_GRP2_ForceReset(LL_APB1_GRP2_PERIPH_ADC1);
   LL_APB1_GRP2_ReleaseReset(LL_APB1_GRP2_PERIPH_ADC1);
 
-  // DMA must be initialized before ADC is enabled
-  BOARD_DMA_Init();
+  // Отключено — DMA для регулярного канала (APRS audio) создаёт RF помехи
+  // BOARD_DMA_Init();
 
   LL_ADC_SetCommonPathInternalCh(ADC1_COMMON, LL_ADC_PATH_INTERNAL_NONE);
   LL_ADC_SetResolution(ADC1, LL_ADC_RESOLUTION_12B);
   LL_ADC_SetDataAlignment(ADC1, LL_ADC_DATA_ALIGN_RIGHT);
 
   // -----------------------------------------------------------------------
-  // Regular group: CH9 (APRS audio) → DMA circular
+  // Regular group: CH9 (APRS audio) — отключён, DMA не запускается
   // -----------------------------------------------------------------------
   LL_ADC_SetSequencersScanMode(ADC1, LL_ADC_SEQ_SCAN_ENABLE);
-
-  /* LL_ADC_REG_SetTriggerSource(ADC1, LL_ADC_REG_TRIG_SOFTWARE);
-LL_ADC_REG_SetContinuousMode(ADC1, LL_ADC_REG_CONV_CONTINUOUS); */
-
-  LL_ADC_REG_SetTriggerSource(ADC1, LL_ADC_REG_TRIG_EXT_TIM3_TRGO);
-  // LL_ADC_REG_SetTriggerEdge(ADC1, LL_ADC_REG_TRIG_EXT_RISING);
-  SET_BIT(ADC1->CR2, ADC_CR2_EXTTRIG);
-  LL_ADC_REG_SetContinuousMode(ADC1, LL_ADC_REG_CONV_SINGLE);
-
-  LL_ADC_REG_SetDMATransfer(ADC1, LL_ADC_REG_DMA_TRANSFER_UNLIMITED);
-  // Single rank — only CH9
   LL_ADC_REG_SetSequencerLength(ADC1, LL_ADC_REG_SEQ_SCAN_DISABLE);
   LL_ADC_REG_SetSequencerRanks(ADC1, LL_ADC_REG_RANK_1, LL_ADC_CHANNEL_9);
   LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_9,
                                 LL_ADC_SAMPLINGTIME_239CYCLES_5);
-  /* LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_9,
-                                LL_ADC_SAMPLINGTIME_28CYCLES_5); */
 
   // -----------------------------------------------------------------------
-  // Injected group: CH8 (battery voltage) → software-triggered, single shot
-  //
-  // Per reference manual 16.3.12.1: JAUTO=0, SCAN=1.
-  // Injected trigger fires on JSWSTART; result lands in JDR1.
+  // Injected group: CH8 (battery voltage) — software-triggered, single shot
+  // Не использует DMA, не создаёт RF помех
   // -----------------------------------------------------------------------
   LL_ADC_INJ_SetTriggerSource(ADC1, LL_ADC_INJ_TRIG_SOFTWARE);
   LL_ADC_INJ_SetSequencerLength(ADC1, LL_ADC_INJ_SEQ_SCAN_DISABLE); // 1 rank
   LL_ADC_INJ_SetSequencerRanks(ADC1, LL_ADC_INJ_RANK_1, LL_ADC_CHANNEL_8);
   LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_8,
                                 LL_ADC_SAMPLINGTIME_5CYCLES_5);
-  // Automatic injection disabled (we trigger manually)
   LL_ADC_INJ_SetTrigAuto(ADC1, LL_ADC_INJ_TRIG_INDEPENDENT);
 
   LL_RCC_SetADCClockSource(LL_RCC_ADC_CLKSOURCE_PCLK_DIV2);
@@ -228,16 +212,14 @@ LL_ADC_REG_SetContinuousMode(ADC1, LL_ADC_REG_CONV_CONTINUOUS); */
   while (LL_ADC_IsCalibrationOnGoing(ADC1))
     ;
 
-  // Route ADC1 requests to DMA1 Channel 1 via SYSCFG remap
-  // (SYSCFG clock is already enabled by UART_Init before this call)
-  LL_SYSCFG_SetDMARemap(DMA1, LL_DMA_CHANNEL_1, LL_SYSCFG_DMA_MAP_ADC1);
-
-  // DMA must be enabled before ADC
-  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_1);
+  // DMA не запускаем — только injected channel для батареи
+  // LL_SYSCFG_SetDMARemap(DMA1, LL_DMA_CHANNEL_1, LL_SYSCFG_DMA_MAP_ADC1);
+  // LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_1);
 
   LL_ADC_Enable(ADC1);
 
-  LL_TIM_EnableCounter(TIM3);
+  // TIM3 не запускаем — триггер регулярного канала не нужен
+  // LL_TIM_EnableCounter(TIM3);
 }
 
 void BOARD_ADC_StartAPRS_DMA(void) {
@@ -322,10 +304,8 @@ void BOARD_Init(void) {
   UART_Init(); // also enables SYSCFG clock
   LogC(LOG_C_BRIGHT_WHITE, "Init start");
 
-  // Отключено — ADC/DAC DMA и TIM3/TIM6 создают RF помехи
-  // BOARD_TIM3_Init();
-  // BOARD_ADC_Init();
-  // BOARD_DAC_Init();
+  BOARD_ADC_Init(); // Только injected ADC для батареи, без DMA/TIM3
+  // BOARD_DAC_Init(); // Отключено — DAC DMA создаёт RF помехи
 
   LogC(LOG_C_BRIGHT_WHITE, "Flash init");
   PY25Q16_Init();
