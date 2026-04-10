@@ -25,6 +25,19 @@ typedef enum {
   SCAN_MODE_MULTIWATCH, // Мультивотч нескольких VFO
 } ScanMode;
 
+#define NOISE_HISTORY_SIZE 32
+
+typedef struct {
+    uint8_t values[NOISE_HISTORY_SIZE];
+    uint8_t idx;
+    uint8_t count;
+    uint16_t sum;
+    uint32_t sum_sq; // сумма квадратов для stddev
+    uint8_t mean;
+    uint8_t stddev;
+    uint8_t k; // коэффициент (2 по умолчанию)
+} NoiseHistory;
+
 // Контекст сканирования
 typedef struct {
   // Машина состояний
@@ -59,6 +72,9 @@ typedef struct {
   SCMD_Context *cmdCtx;
 
   bool precise;
+
+        NoiseHistory noiseHist;
+    uint8_t adaptiveThreshold; // вычисляемый порог
 
 } ScanContext;
 

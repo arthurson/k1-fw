@@ -112,7 +112,7 @@ void STATUSLINE_render(void) {
     icons[idx++] = SYM_BROADCAST;
   }
 
-  if (gSettings.upconverter) {
+  if (ctx && ctx->upconverter) {
     icons[idx++] = SYM_CONVERTER;
   }
 

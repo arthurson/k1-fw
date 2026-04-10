@@ -24,6 +24,8 @@ extern const uint16_t StepFrequencyTable[15];
 extern Band gCurrentBand;
 extern bool gShowAllRSSI;
 extern bool gMonitorMode;
+extern ExtendedVFOContext *vfo;
+extern VFOContext *ctx;
 
 // New functions for multi-VFO and multiwatch support
 void RADIO_InitState(RadioState *state, uint8_t num_vfos);
@@ -36,6 +38,7 @@ void RADIO_LoadChannelToVFO(RadioState *state, uint8_t vfo_index,
                             uint16_t channel_index);
 bool RADIO_NextChannel(bool next);
 bool RADIO_SaveCurrentVFO(RadioState *state);
+bool RADIO_SaveAllVFOs(RadioState *state);
 void RADIO_ToggleMultiwatch(RadioState *state, bool enable);
 void RADIO_UpdateMultiwatch(RadioState *state);
 bool RADIO_ToggleVFOMode(RadioState *state, uint8_t vfo_index);

@@ -188,6 +188,7 @@ bool CMDSCAN_key(KEY_Code_t key, Key_State_t state) {
       return true;
 
     case KEY_F:
+      CMDEDIT_SetFilename(cmdState.filename); // добавить эту строку
       APPS_run(APP_CMDEDIT);
       return true;
 

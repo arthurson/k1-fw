@@ -23,9 +23,8 @@
 #define FSK_SYNC_2 0xAB
 #define FSK_SYNC_3 0x45
 
-/* const uint16_t REG_59 =
-    0 | ((4 - 1) << 4); // 4 байта sync, 8 байт preamble */
-const uint16_t REG_59 = 0x0000;
+const uint16_t REG_59 =
+    (1 << 3) | ((8 - 1) << 4); // 4 байта sync, 8 байт preamble
 
 uint16_t FSK_TXDATA[FSK_LEN];
 uint16_t FSK_RXDATA[FSK_LEN];
@@ -57,8 +56,8 @@ void RF_EnterFsk() {
   RF_Write(0x58, 0x00C1);
 
   // 6. Настройка CRC (отключено)
-  RF_Write(0x5C, 0x5665 & ~(1 << 6)); // disable crc
-  // RF_Write(0x5C, 0x5665); // disable crc
+  // RF_Write(0x5C, 0x5665 & ~(1 << 6)); // disable crc
+  RF_Write(0x5C, 0x5665); // disable crc
 
   // 7. Настройка длины пакета
   uint16_t length = FSK_LEN * 2 - 1;

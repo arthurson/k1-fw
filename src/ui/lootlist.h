@@ -12,4 +12,7 @@ void LOOTLIST_update();
 bool LOOTLIST_key(KEY_Code_t key, Key_State_t state);
 void LOOTLIST_render();
 
+// Loot item editing mode
+void LOOTLIST_StartEdit(uint16_t index);
+
 #endif /* end of include guard: LOOTLIST_APP_H */

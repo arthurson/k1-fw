@@ -6,6 +6,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define SQ_PRESETS_COUNT 11  // 0..10 levels
+
+typedef struct {
+  uint16_t ro;  // RSSI open threshold
+  uint8_t no;   // Noise open threshold
+  uint8_t go;   // Glitch open threshold
+  uint8_t rc;   // RSSI close threshold (ro - 4)
+  uint8_t nc;   // Noise close threshold (no + 4)
+  uint8_t gc;   // Glitch close threshold (go + 4)
+} SquelchPreset;
+
 static const uint16_t RSSI_MIN = 28;
 static const uint16_t RSSI_MAX = 226;
 
@@ -42,6 +53,13 @@ uint32_t IncDecU(uint32_t val, uint32_t min, uint32_t max, bool inc);
 
 bool IsReadable(char *name);
 SQL GetSql(uint8_t level);
+
+// Squelch preset management (file-based, VHF/UHF separate)
+void SQ_InitPresets(void);                          // Call at system startup
+SquelchPreset GetSqlPreset(uint8_t level, uint32_t freq);  // Get preset for level+freq
+bool SQ_SavePreset(const char *file, uint8_t level, SquelchPreset *preset);
+bool SQ_LoadPreset(const char *file, uint8_t level, SquelchPreset *preset);
+
 uint32_t DeltaF(uint32_t f1, uint32_t f2);
 uint32_t RoundToStep(uint32_t f, uint32_t step);
 

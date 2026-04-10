@@ -1,5 +1,10 @@
 #include "measurements.h"
+#include "../settings.h"
+#include "../helper/storage.h"
 #include <stdint.h>
+
+static const char *SQ_FILE_VHF = "/vhf.sq";
+static const char *SQ_FILE_UHF = "/uhf.sq";
 
 long long Clamp(long long v, long long min, long long max) {
   return v <= min ? min : (v >= max ? max : v);
@@ -79,29 +84,6 @@ uint16_t Mean(const uint16_t *array, size_t n) {
   return sum / n;
 }
 
-uint16_t Sqrt(uint32_t v) {
-  uint16_t res = 0;
-  for (uint32_t i = 0; i < v; ++i) {
-    if (i * i <= v) {
-      res = i;
-    } else {
-      break;
-    }
-  }
-  return res;
-}
-
-uint16_t Std(const uint16_t *data, size_t n) {
-  if (data == NULL || n == 0) {
-    return 0;
-  }
-  uint32_t sumDev = 0;
-  for (uint8_t i = 0; i < n; ++i) {
-    sumDev += data[i] * data[i];
-  }
-  return Sqrt(sumDev / n);
-}
-
 uint32_t AdjustU(uint32_t val, uint32_t min, uint32_t max, int32_t inc) {
   if (inc > 0) {
     return val == max - inc ? min : val + inc;
@@ -131,6 +113,69 @@ SQL GetSql(uint8_t level) {
   sq.nc = sq.no + 4;
   sq.gc = sq.go + 4;
   return sq;
+}
+
+// ── Squelch preset file-based management ─────────────────────────────────────
+
+static void SQ_InitDefaults(SquelchPreset *presets) {
+  for (uint8_t i = 0; i < SQ_PRESETS_COUNT; i++) {
+    SQL sq = GetSql(i);
+    presets[i].ro = sq.ro;
+    presets[i].no = sq.no;
+    presets[i].go = sq.go;
+    presets[i].rc = sq.rc;
+    presets[i].nc = sq.nc;
+    presets[i].gc = sq.gc;
+  }
+}
+
+static void SQ_EnsureFileExists(const char *file) {
+  SquelchPreset p;
+  if (!SQ_LoadPreset(file, 0, &p)) {
+    // File doesn't exist - create with defaults
+    SquelchPreset presets[SQ_PRESETS_COUNT];
+    SQ_InitDefaults(presets);
+    for (uint8_t i = 0; i < SQ_PRESETS_COUNT; i++) {
+      SQ_SavePreset(file, i, &presets[i]);
+    }
+  }
+}
+
+void SQ_InitPresets(void) {
+  SQ_EnsureFileExists(SQ_FILE_VHF);
+  SQ_EnsureFileExists(SQ_FILE_UHF);
+}
+
+SquelchPreset GetSqlPreset(uint8_t level, uint32_t freq) {
+  if (level >= SQ_PRESETS_COUNT) level = SQ_PRESETS_COUNT - 1;
+  
+  bool isUHF = (freq >= SETTINGS_GetFilterBound());
+  const char *file = isUHF ? SQ_FILE_UHF : SQ_FILE_VHF;
+  
+  SquelchPreset preset;
+  if (SQ_LoadPreset(file, level, &preset)) {
+    return preset;
+  }
+  
+  // Fallback to calculated default
+  SQL sq = GetSql(level);
+  preset.ro = sq.ro;
+  preset.no = sq.no;
+  preset.go = sq.go;
+  preset.rc = sq.rc;
+  preset.nc = sq.nc;
+  preset.gc = sq.gc;
+  return preset;
+}
+
+bool SQ_SavePreset(const char *file, uint8_t level, SquelchPreset *preset) {
+  if (level >= SQ_PRESETS_COUNT) return false;
+  return Storage_Save(file, level, preset, sizeof(SquelchPreset));
+}
+
+bool SQ_LoadPreset(const char *file, uint8_t level, SquelchPreset *preset) {
+  if (level >= SQ_PRESETS_COUNT) return false;
+  return Storage_Load(file, level, preset, sizeof(SquelchPreset));
 }
 
 uint32_t DeltaF(uint32_t f1, uint32_t f2) {

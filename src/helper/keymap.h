@@ -4,111 +4,107 @@
 #include "../driver/keyboard.h"
 #include <stdint.h>
 
+// -1 зарезервирован: param не задан (дефолтное поведение действия)
+#define KA_PARAM_DEFAULT ((int16_t) - 1)
+
 typedef enum {
-  KA_NONE,
+  KA_NONE = 0,
+
+  // --- Приложения ---
+  KA_APP_LAUNCH, // param = AppType
+  KA_EXIT_APP,
+
+  // --- Частота и навигация по каналам ---
+  KA_FREQ_INPUT,
+  KA_VFO_MODE, // F <-> CH
+  KA_NEXT_VFO,
+  KA_NEXT_CH,
+  KA_PREV_CH,
+  KA_TUNE_TO_LOOT,
+
+  // --- Параметры радио (param = шаг: +N вверх, -N вниз) ---
   KA_STEP,
   KA_BW,
+  KA_MODULATION,
+  KA_SQUELCH,
   KA_GAIN,
   KA_POWER,
-  KA_BL,
-  KA_RSSI,
-  KA_FLASHLIGHT,
-  KA_MONI,
-  KA_TX,
-  KA_VOX,
+  KA_VOLUME,
+  KA_AFC,
+  KA_DEV,
+  KA_FILTER,
+  KA_SCRAMBLER,
+  KA_RADIO,
+  KA_XTAL,
   KA_OFFSET,
+  KA_OFFSET_DIR,
+
+  // --- Скан и списки ---
+  KA_LOOTLIST,
+  KA_CH_LIST,
+  KA_MULTIWATCH,
   KA_BLACKLIST_LAST,
   KA_WHITELIST_LAST,
-  KA_FASTMENU1,
-  KA_FASTMENU2,
-  KA_CH_SETTING,
+  KA_NEXT_BLACKLIST,
+  KA_NEXT_WHITELIST,
+  KA_CLEAR_LOOT,
+  KA_SAVE_LOOT_CH,
+
+  // --- TX / PTT ---
+  KA_TX,
+  KA_PTT,
+  KA_VOX,
+  KA_MONI,
+
+  // --- Отображение ---
+  KA_RSSI,
+  KA_RSSI_GRAPH,
+  KA_ALWAYS_RSSI,
+  KA_LEVEL_DISPLAY,
+  KA_GRAPH_UNIT,
+  KA_VFO_MENU,
+  KA_RADIO_SETTINGS,
+  KA_PRO_MODE,
+
+  // --- Полоса / диапазон (специфично для сканера) ---
   KA_BANDS,
   KA_CHANNELS,
-  KA_LOOTLIST,
+  KA_BAND_UP,
+  KA_BAND_DOWN,
+  KA_ZOOM_IN,
+  KA_ZOOM_OUT,
+  KA_RANGE_INPUT,
 
-  // Radio parameter actions
-  KA_MODULATION,      // Toggle modulation type
-  KA_SQUELCH_UP,      // Increase squelch value
-  KA_SQUELCH_DOWN,    // Decrease squelch value
-  KA_OFFSET_UP,       // Increase TX offset
-  KA_OFFSET_DOWN,     // Decrease TX offset
-  KA_OFFSET_DIR,      // Toggle offset direction
-  KA_RADIO,           // Toggle radio type
-  KA_FILTER,          // Toggle filter (VHF/UHF)
-  KA_AFC,             // Toggle AFC
-  KA_DEV,             // Toggle deviation
-  KA_XTAL,            // Toggle XTAL
-  KA_SCRAMBLER,       // Toggle scrambler
-  KA_VOLUME,          // Toggle volume (SI4732)
+  // --- Быстрые настройки ---
+  KA_BL,
+  KA_BL_MAX,
+  KA_BL_MIN,
+  KA_CONTRAST,
+  KA_BEEP,
+  KA_INVERT_BTNS,
+  KA_FLASHLIGHT,
 
-  // Display & UI actions
-  KA_RSSI_GRAPH,      // Toggle RSSI graph
-  KA_LEVEL_DISPLAY,   // Toggle level in VFO
-  KA_ALWAYS_RSSI,     // Toggle always RSSI bar
-  KA_GRAPH_UNIT,      // Next graph measurement
-  KA_VFO_MENU,        // Toggle VFO menu
-  KA_RADIO_SETTINGS,  // Toggle radio settings menu
-  KA_PRO_MODE,        // Toggle PRO mode
-
-  // Frequency & channel actions
-  KA_FREQ_INPUT,      // Show frequency input
-  KA_CH_LIST,         // Show channel list
-  KA_VFO_MODE,        // Toggle VFO mode (F<->CH)
-  KA_NEXT_CH,         // Next channel
-  KA_PREV_CH,         // Previous channel
-  KA_NEXT_VFO,        // Next VFO
-  KA_TUNE_TO_LOOT,    // Tune to last loot
-
-  // Scan & list actions
-  KA_MULTIWATCH,      // Toggle multiwatch
-  KA_NEXT_BLACKLIST,  // Skip to next blacklisted
-  KA_NEXT_WHITELIST,  // Skip to next whitelisted
-  KA_CLEAR_LOOT,      // Clear all loot
-  KA_SAVE_LOOT_CH,    // Save loot to channels
-
-  // Application control
-  KA_APP_VFO1,        // Run VFO app
-  KA_APP_SCAN,        // Run Scanner app
-  KA_APP_FC,          // Run FC app
-  KA_APP_SETTINGS,    // Run Settings app
-  KA_APP_FILES,       // Run Files app
-  KA_APP_OSC,         // Run Oscilloscope app
-  KA_EXIT_APP,        // Exit current app
-
-  // Band & range actions
-  KA_BAND_UP,         // Shift band up
-  KA_BAND_DOWN,       // Shift band down
-  KA_ZOOM_IN,         // Zoom frequency range in
-  KA_ZOOM_OUT,        // Zoom frequency range out
-  KA_RANGE_INPUT,     // Set frequency range
-
-  // PTT & TX actions
-  KA_PTT,             // Toggle PTT
-
-  // Quick settings
-  KA_BL_MAX,          // Backlight max brightness
-  KA_BL_MIN,          // Backlight min brightness
-  KA_CONTRAST,        // LCD contrast
-  KA_BEEP,            // Toggle beep
-  KA_INVERT_BTNS,     // Invert buttons
+  // --- Прочее ---
+  KA_FASTMENU1,
+  KA_FASTMENU2,
 
   KA_COUNT,
 } KeyAction;
 
 typedef struct {
   KeyAction action;
-  uint8_t param; // Параметр действия (например, ID приложения)
+  int16_t param; // KA_PARAM_DEFAULT = не задан
 } AppAction_t;
 
 typedef struct {
-  AppAction_t click[KEY_COUNT]; // Действия на клик (KEY_RELEASED)
-  AppAction_t long_press[KEY_COUNT]; // Действия на удержание (KEY_LONG_PRESSED)
+  AppAction_t click[KEY_COUNT];      // KEY_RELEASED
+  AppAction_t long_press[KEY_COUNT]; // KEY_LONG_PRESSED
 } AppKeymap_t;
 
-void KEYMAP_Load();
-void KEYMAP_Save();
+void KEYMAP_Load(void);
+void KEYMAP_Save(void);
 
 extern AppKeymap_t gCurrentKeymap;
 extern const char *KA_NAMES[];
 
-#endif // !KEYMAP_H
+#endif // KEYMAP_H

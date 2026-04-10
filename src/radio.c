@@ -103,6 +103,7 @@ static const ParamDesc PARAM_DESC[PARAM_COUNT] = {
     [PARAM_XTAL] = {"XTAL", 0, XTAL_3_38_4M + 1},
     [PARAM_SCRAMBLER] = {"SCR", 0, 10},
     [PARAM_FILTER] = {"Filter", 0, FILTER_AUTO + 1},
+    [PARAM_UPCONVERTER] = {"Upconv", 0, UINT32_MAX},
 };
 
 // Удобный алиас для совместимости с кодом, который обращается к PARAM_NAMES
@@ -270,6 +271,9 @@ static void initVfoFile() {
             .bw = BK4819_FILTER_BW_12k,
             .step = STEP_25_0kHz,
             .squelch.value = 4,
+            .mic = 8,
+            .deviation = 50,
+            .upconverter = 0,
         },
         {
             .name = "VFO B",
@@ -277,6 +281,9 @@ static void initVfoFile() {
             .bw = BK4819_FILTER_BW_12k,
             .step = STEP_25_0kHz,
             .squelch.value = 4,
+            .mic = 8,
+            .deviation = 50,
+            .upconverter = 0,
         },
         {
             .name = "VFO C",
@@ -284,6 +291,9 @@ static void initVfoFile() {
             .bw = BK4819_FILTER_BW_12k,
             .step = STEP_25_0kHz,
             .squelch.value = 4,
+            .mic = 8,
+            .deviation = 50,
+            .upconverter = 0,
         },
         {
             .name = "VFO D",
@@ -291,6 +301,9 @@ static void initVfoFile() {
             .bw = BK4819_FILTER_BW_12k,
             .step = STEP_25_0kHz,
             .squelch.value = 4,
+            .mic = 8,
+            .deviation = 50,
+            .upconverter = 0,
         },
     };
     for (uint8_t i = 0; i < MAX_VFOS; ++i) {
@@ -359,7 +372,7 @@ void RADIO_SetupToneDetection(VFOContext *ctx) {
                    BK4819_REG_3F_FSK_FIFO_ALMOST_FULL |
                    BK4819_REG_3F_FSK_RX_FINISHED;
 
-  InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
+  // InterruptMask |= BK4819_REG_3F_SQUELCH_LOST | BK4819_REG_3F_SQUELCH_FOUND;
 
   if (gSettings.dtmfdecode) {
     BK4819_EnableDTMF();
@@ -413,7 +426,7 @@ static void sendEOT() {
 }
 
 static TXStatus checkTX(VFOContext *ctx) {
-  if (gSettings.upconverter) {
+  if (ctx->upconverter) {
     return TX_DISABLED_UPCONVERTER;
   }
 
@@ -461,7 +474,7 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
     BK4819_SetFilterBandwidth(ctx->bandwidth);
     return true;
   case PARAM_SQUELCH_VALUE:
-    BK4819_Squelch(ctx->squelch.value, gSettings.sqlOpenTime,
+    BK4819_Squelch(ctx->squelch.value, ctx->frequency, gSettings.sqlOpenTime,
                    gSettings.sqlCloseTime);
     return true;
   case PARAM_SQUELCH_TYPE:
@@ -477,6 +490,9 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
       BK4819_SelectFilterEx(filter);
     }
     BK4819_TuneTo(ctx->frequency, ctx->preciseFChange);
+    return true;
+  case PARAM_FREQUENCY_FACT:
+    // Read-only computed value, nothing to set
     return true;
   case PARAM_AFC:
     BK4819_SetAFC(ctx->afc);
@@ -517,6 +533,9 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
   case PARAM_DEV:
     BK4819_SetRegValue(RS_DEV, ctx->dev);
     return true;
+  case PARAM_UPCONVERTER:
+    // Upconverter affects frequency calculation, requires retune
+    return true;
   case PARAM_VOLUME:
     return true;
   case PARAM_RADIO:
@@ -546,6 +565,9 @@ static bool setParamSI4732(VFOContext *ctx, ParamType p) {
   switch (p) {
   case PARAM_FREQUENCY:
     SI47XX_TuneTo(ctx->frequency);
+    return true;
+  case PARAM_FREQUENCY_FACT:
+    // Read-only computed value, nothing to set
     return true;
   case PARAM_MODULATION:
     SI47XX_SwitchMode((SI47XX_MODE)ctx->modulation);
@@ -590,6 +612,7 @@ static bool setParamSI4732(VFOContext *ctx, ParamType p) {
   case PARAM_XTAL:
   case PARAM_SCRAMBLER:
   case PARAM_FILTER:
+  case PARAM_UPCONVERTER:
   case PARAM_RSSI:
   case PARAM_NOISE:
   case PARAM_GLITCH:
@@ -606,9 +629,13 @@ static bool setParamBK1080(VFOContext *ctx, ParamType p) {
     BK1080_SetFrequency(ctx->frequency);
     return true;
   }
+  if (p == PARAM_FREQUENCY_FACT) {
+    // Read-only computed value, nothing to set
+    return true;
+  }
   // AF parameters are BK4819-specific
   if (p == PARAM_AF_RX_300 || p == PARAM_AF_RX_3K || p == PARAM_AF_TX_300 ||
-      p == PARAM_AF_TX_3K) {
+      p == PARAM_AF_TX_3K || p == PARAM_UPCONVERTER) {
     return true;
   }
   return false;
@@ -870,6 +897,9 @@ bool RADIO_IsParamValid(VFOContext *ctx, ParamType param, uint32_t value) {
   case PARAM_POWER:
     return value <= TX_POW_HIGH;
 
+  case PARAM_UPCONVERTER:
+    return true; // Any frequency is valid
+
   default:
     return true;
   }
@@ -978,7 +1008,7 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     break;
 
   case PARAM_FREQUENCY:
-    ctx->frequency = value + gSettings.upconverter;
+    ctx->frequency = value + ctx->upconverter;
     break;
   case PARAM_VOLUME:
     ctx->volume = (uint8_t)value;
@@ -1018,6 +1048,11 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     break;
   case PARAM_FILTER:
     ctx->filter = (Filter)value;
+    break;
+  case PARAM_UPCONVERTER:
+    ctx->upconverter = value;
+    // Need to retune with new upconverter value
+    ctx->dirty[PARAM_FREQUENCY] = true;
     break;
   case PARAM_SQUELCH_VALUE:
     ctx->squelch.value = value;
@@ -1096,7 +1131,7 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
   case PARAM_SNR:
     return vfo->msm.snr;
   case PARAM_FREQUENCY:
-    return ctx->frequency - gSettings.upconverter;
+    return ctx->frequency - ctx->upconverter;
   case PARAM_FREQUENCY_FACT:
     return ctx->frequency;
   case PARAM_PRECISE_F_CHANGE:
@@ -1141,6 +1176,8 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
     return ctx->mic;
   case PARAM_DEV:
     return ctx->dev;
+  case PARAM_UPCONVERTER:
+    return ctx->upconverter;
   case PARAM_COUNT:
     break;
   }
@@ -1524,8 +1561,8 @@ bool RADIO_SwitchVFO(RadioState *state, uint8_t vfo_index) {
 
 // Общие умолчания, одинаковые для VFO и Channel
 static void applyGlobalDefaults(VFOContext *ctx) {
-  RADIO_SetParam(ctx, PARAM_MIC, gSettings.mic, false);
-  RADIO_SetParam(ctx, PARAM_DEV, gSettings.deviation * 10, false);
+  // mic, deviation, upconverter are now per-VFO - don't override from gSettings
+  // Only apply if not loading from storage (i.e., fresh init)
   RADIO_SetParam(ctx, PARAM_XTAL, XTAL_2_26M, false);
   RADIO_SetParam(ctx, PARAM_SCRAMBLER, 0, false);
   RADIO_SetParam(ctx, PARAM_AFC, 0, false);
@@ -1554,6 +1591,9 @@ static void setCommonParamsFromVFO(VFOContext *ctx, const VFO *storage) {
   RADIO_SetParam(ctx, PARAM_TX_FREQUENCY, storage->txF, false);
   RADIO_SetParam(ctx, PARAM_TX_OFFSET, storage->txF, false);
   RADIO_SetParam(ctx, PARAM_TX_OFFSET_DIR, storage->offsetDir, false);
+  RADIO_SetParam(ctx, PARAM_MIC, storage->mic, false);
+  RADIO_SetParam(ctx, PARAM_DEV, storage->deviation * 10, false);
+  RADIO_SetParam(ctx, PARAM_UPCONVERTER, storage->upconverter, false);
 
   strcpy(ctx->name, storage->name);
   ctx->code = storage->code.rx;
@@ -1589,6 +1629,10 @@ static void setCommonParamsFromCh(VFOContext *ctx, const CH *storage) {
   ctx->tx_state.is_active = false;
   ctx->tx_state.last_error = TX_UNKNOWN;
 
+  // For channels, apply global defaults (channels don't store mic/dev/upconv)
+  RADIO_SetParam(ctx, PARAM_MIC, gSettings.mic, false);
+  RADIO_SetParam(ctx, PARAM_DEV, gSettings.deviation * 10, false);
+  RADIO_SetParam(ctx, PARAM_UPCONVERTER, gSettings.upconverter, false);
   applyGlobalDefaults(ctx);
 }
 
@@ -1640,6 +1684,10 @@ void RADIO_SaveVFOToStorage(const RadioState *state, uint8_t vfo_index,
 
   storage->txF = ctx->tx_state.frequency;
   storage->offsetDir = ctx->tx_state.offsetDirection;
+
+  storage->mic = ctx->mic;
+  storage->deviation = ctx->dev / 10;  // Convert 0-2550 to 0-255
+  storage->upconverter = ctx->upconverter;
 }
 
 bool RADIO_SaveCurrentVFO(RadioState *state) {
@@ -1651,6 +1699,20 @@ bool RADIO_SaveCurrentVFO(RadioState *state) {
 
   RADIO_SaveVFOToStorage(state, current, &storage);
   saveVfo(current, &storage);
+
+  return true;
+}
+
+// Save all VFOs to storage (used during app switching)
+bool RADIO_SaveAllVFOs(RadioState *state) {
+  if (!state)
+    return false;
+
+  VFO storage;
+  for (uint8_t i = 0; i < state->num_vfos; i++) {
+    RADIO_SaveVFOToStorage(state, i, &storage);
+    saveVfo(i, &storage);
+  }
 
   return true;
 }
@@ -1767,15 +1829,13 @@ static bool isBroadcastReceiver(const VFOContext *ctx) {
   return (ctx->radio_type == RADIO_SI4732 || ctx->radio_type == RADIO_BK1080);
 }
 
-#include "helper/scan.h"
-
 bool RADIO_CheckSquelch(VFOContext *ctx) {
   if (ctx->tx_state.is_active)
     return false;
   if (gMonitorMode)
     return true;
   if (ctx->radio_type == RADIO_BK4819) {
-    return SCAN_IsSqOpen();
+    return BK4819_IsSquelchOpen();
   }
   return gShowAllRSSI ? RADIO_GetSNR(ctx) > ctx->squelch.value : true;
 }
@@ -2072,6 +2132,13 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
     break;
   case PARAM_SQUELCH_TYPE:
     sprintf(buf, "%s", SQ_TYPE_NAMES[ctx->squelch.type]);
+    break;
+  case PARAM_UPCONVERTER:
+    if (v == 0) {
+      sprintf(buf, "Off");
+    } else {
+      sprintf(buf, "+%d.%02d", v / MHZ, (v % MHZ) / KHZ);
+    }
     break;
   }
   return buf;

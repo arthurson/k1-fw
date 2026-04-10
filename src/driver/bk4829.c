@@ -1,6 +1,7 @@
 #include "bk4829.h"
 
 #include "../external/printf/printf.h"
+#include "../helper/measurements.h"
 #include "../settings.h"
 #include "bk4819-regs.h"
 #include "gpio.h"
@@ -671,13 +672,23 @@ void BK4819_SetupSquelch(SQL sq, uint8_t delayOpen, uint8_t delayClose) {
 
   BK4819_WriteRegister(BK4819_REG_4D, 0xA000 | sq.gc);
   BK4819_WriteRegister(BK4819_REG_4E, (1u << 14) | (delayOpen << 11) |
-                                          (delayClose << 9) | sq.go);
+                                          (delayClose << 9) | (1 << 8) | sq.go);
+
   BK4819_WriteRegister(BK4819_REG_4F, (sq.nc << 8) | sq.no);
   BK4819_WriteRegister(BK4819_REG_78, (sq.ro << 8) | sq.rc);
 }
 
-void BK4819_Squelch(uint8_t sql, uint8_t openDelay, uint8_t closeDelay) {
-  BK4819_SetupSquelch(GetSql(sql), openDelay, closeDelay);
+void BK4819_Squelch(uint8_t sql, uint32_t freq, uint8_t openDelay, uint8_t closeDelay) {
+  SquelchPreset preset = GetSqlPreset(sql, freq);
+  SQL sq = {
+    .ro = preset.ro,
+    .rc = preset.rc,
+    .no = preset.no,
+    .nc = preset.nc,
+    .go = preset.go,
+    .gc = preset.gc,
+  };
+  BK4819_SetupSquelch(sq, openDelay, closeDelay);
 }
 
 void BK4819_SquelchType(SquelchType type) {
@@ -1602,7 +1613,7 @@ void BK4819_Init(void) {
   BK4819_WriteRegister(0x2F, 0x9890); // audio tx limit, emph rx gain
   BK4819_WriteRegister(0x53, 0x2028); // audio alc tc
 
-  RF_SetRxEqualizer(-3, +4);
+  // RF_SetRxEqualizer(-3, +4);
 
   BK4819_WriteRegister(BK4819_REG_7E, 0x3029); // #x302E tx dcc before alc
   BK4819_WriteRegister(BK4819_REG_46, 0x600A);

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/fagci/Downloads/**)",
+      "Bash(make)",
+      "Bash(sed *)",
+      "Bash(arm-none-eabi-gcc *)"
+    ]
+  },
+  "$version": 3
+}

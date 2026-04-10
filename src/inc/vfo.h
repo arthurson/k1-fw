@@ -21,16 +21,19 @@ typedef struct {
   uint8_t bw : 4;
   Radio radio : 2;
   TXOutputPower power : 2;
+  uint8_t mic : 4;           // Mic gain (0-15)
   uint8_t scrambler : 4;
   Squelch squelch;
   CodeRXTX code;
   bool fixedBoundsMode : 1;
   bool isChMode : 1;
   uint8_t gainIndex : 5;
+  uint8_t deviation;         // Deviation setting (0-255, stored as value*10 when used)
+  uint32_t upconverter;      // Upconverter frequency shift (full 32-bit)
 } __attribute__((packed)) VFO;
 
 // Параметры
-typedef const enum {
+typedef enum {
   PARAM_RADIO,
   PARAM_PRECISE_F_CHANGE,
   PARAM_STEP,
@@ -64,6 +67,7 @@ typedef const enum {
   PARAM_XTAL,
   PARAM_SCRAMBLER,
   PARAM_FILTER,
+  PARAM_UPCONVERTER,
 
   PARAM_RSSI,
   PARAM_NOISE,
@@ -162,6 +166,7 @@ typedef struct {
   const FreqBand *current_band; // Активный диапазон
   uint32_t last_save_time; // Время последнего сохранения
   uint32_t frequency : 27; // Текущая частота
+  uint32_t upconverter : 27; // Upconverter frequency shift
   uint16_t dev;
   uint8_t volume; // Громкость
   uint8_t afc;

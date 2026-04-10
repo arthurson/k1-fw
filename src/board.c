@@ -16,6 +16,7 @@
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_rcc.h"
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_system.h"
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_tim.h"
+#include "helper/measurements.h"
 #include "ui/graphics.h"
 #include <stdint.h>
 
@@ -340,6 +341,8 @@ void BOARD_Init(void) {
   PY25Q16_Init();
   LogC(LOG_C_BRIGHT_WHITE, "File system init");
   fs_init();
+  LogC(LOG_C_BRIGHT_WHITE, "Squelch presets init");
+  SQ_InitPresets();
   LogC(LOG_C_BRIGHT_WHITE, "Display init");
   ST7565_Init();
   LogC(LOG_C_BRIGHT_WHITE, "Backlight init");

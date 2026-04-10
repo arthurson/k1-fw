@@ -83,8 +83,12 @@ bool Storage_Save(const char *name, uint16_t num, const void *item,
   uint32_t offset = num * item_size;
   uint32_t required_size = offset + item_size;
 
+  printf("[Storage_Save] file=%s num=%u offset=%lu file_size=%ld required=%lu\n",
+         name, num, offset, file_size, required_size);
+
   // Если нужно расширить файл
   if (required_size > (uint32_t)file_size) {
+    printf("[Storage_Save] Extending file by %lu bytes\n", required_size - file_size);
     // Переходим в конец
     if (lfs_file_seek(&gLfs, &file, 0, LFS_SEEK_END) < 0) {
       printf("[Storage_Save] Seek to end failed\n");
@@ -134,6 +138,7 @@ bool Storage_Save(const char *name, uint16_t num, const void *item,
     return false;
   }
 
+  printf("[Storage_Save] OK: wrote %ld bytes at offset %lu\n", written, offset);
   return true;
 }
 

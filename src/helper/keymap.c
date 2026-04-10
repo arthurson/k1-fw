@@ -9,99 +9,92 @@ AppKeymap_t gCurrentKeymap;
 
 const char *KA_NAMES[] = {
     [KA_NONE] = "NONE",
-    [KA_STEP] = "STEP",
-    [KA_BW] = "BW",
-    [KA_GAIN] = "GAIN",
-    [KA_POWER] = "POWER",
-    [KA_BL] = "BL",
-    [KA_RSSI] = "RSSI",
-    [KA_FLASHLIGHT] = "FLASHLIGHT",
-    [KA_MONI] = "MONI",
-    [KA_TX] = "TX",
-    [KA_VOX] = "VOX",
-    [KA_OFFSET] = "OFFSET",
-    [KA_BLACKLIST_LAST] = "BL LAST",
-    [KA_WHITELIST_LAST] = "WL LAST",
-    [KA_FASTMENU1] = "FAST MENU1",
-    [KA_FASTMENU2] = "FAST MENU2",
-    [KA_CH_SETTING] = "CH SETTING",
-    [KA_BANDS] = "BANDS",
-    [KA_CHANNELS] = "CHANNELS",
-    [KA_LOOTLIST] = "LOOTLIST",
 
-    // Radio parameter actions
-    [KA_MODULATION] = "MODULATION",
-    [KA_SQUELCH_UP] = "SQL UP",
-    [KA_SQUELCH_DOWN] = "SQL DOWN",
-    [KA_OFFSET_UP] = "OFFSET UP",
-    [KA_OFFSET_DOWN] = "OFFSET DOWN",
-    [KA_OFFSET_DIR] = "OFFSET DIR",
-    [KA_RADIO] = "RADIO",
-    [KA_FILTER] = "FILTER",
-    [KA_AFC] = "AFC",
-    [KA_DEV] = "DEV",
-    [KA_XTAL] = "XTAL",
-    [KA_SCRAMBLER] = "SCRAMBLER",
-    [KA_VOLUME] = "VOLUME",
+    // Приложения
+    [KA_APP_LAUNCH] = "Run App",
+    [KA_EXIT_APP]   = "Exit App",
 
-    // Display & UI actions
-    [KA_RSSI_GRAPH] = "RSSI GRAPH",
-    [KA_LEVEL_DISPLAY] = "LEVEL DISP",
-    [KA_ALWAYS_RSSI] = "ALWAYS RSSI",
-    [KA_GRAPH_UNIT] = "GRAPH UNIT",
-    [KA_VFO_MENU] = "VFO MENU",
-    [KA_RADIO_SETTINGS] = "RadioRegs",
-    [KA_PRO_MODE] = "PRO MODE",
+    // Частота и навигация
+    [KA_FREQ_INPUT]   = "Freq Input",
+    [KA_VFO_MODE]     = "VFO Mode",
+    [KA_NEXT_VFO]     = "Next VFO",
+    [KA_NEXT_CH]      = "Next Ch",
+    [KA_PREV_CH]      = "Prev Ch",
+    [KA_TUNE_TO_LOOT] = "Tune Loot",
 
-    // Frequency & channel actions
-    [KA_FREQ_INPUT] = "FREQ INPUT",
-    [KA_CH_LIST] = "CH LIST",
-    [KA_VFO_MODE] = "VFO MODE",
-    [KA_NEXT_CH] = "NEXT CH",
-    [KA_PREV_CH] = "PREV CH",
-    [KA_NEXT_VFO] = "NEXT VFO",
-    [KA_TUNE_TO_LOOT] = "TUNE LOOT",
+    // Параметры радио
+    [KA_STEP]      = "Step",
+    [KA_BW]        = "BW",
+    [KA_MODULATION]= "Mod",
+    [KA_SQUELCH]   = "SQL",
+    [KA_GAIN]      = "Gain",
+    [KA_POWER]     = "Power",
+    [KA_VOLUME]    = "Volume",
+    [KA_AFC]       = "AFC",
+    [KA_DEV]       = "Dev",
+    [KA_FILTER]    = "Filter",
+    [KA_SCRAMBLER] = "Scrambler",
+    [KA_RADIO]     = "Radio",
+    [KA_XTAL]      = "Xtal",
+    [KA_OFFSET]    = "Offset",
+    [KA_OFFSET_DIR]= "Offset Dir",
 
-    // Scan & list actions
-    [KA_MULTIWATCH] = "MULTIWATCH",
-    [KA_NEXT_BLACKLIST] = "NEXT BL",
-    [KA_NEXT_WHITELIST] = "NEXT WL",
-    [KA_CLEAR_LOOT] = "CLEAR LOOT",
-    [KA_SAVE_LOOT_CH] = "SAVE LOOT",
+    // Скан и списки
+    [KA_LOOTLIST]       = "Lootlist",
+    [KA_CH_LIST]        = "Ch List",
+    [KA_MULTIWATCH]     = "Multiwatch",
+    [KA_BLACKLIST_LAST] = "BL Last",
+    [KA_WHITELIST_LAST] = "WL Last",
+    [KA_NEXT_BLACKLIST] = "Next BL",
+    [KA_NEXT_WHITELIST] = "Next WL",
+    [KA_CLEAR_LOOT]     = "Clear Loot",
+    [KA_SAVE_LOOT_CH]   = "Save Loot",
 
-    // Application control
-    [KA_APP_VFO1] = "APP VFO1",
-    [KA_APP_SCAN] = "APP SCAN",
-    [KA_APP_FC] = "APP FC",
-    [KA_APP_SETTINGS] = "APP SETTINGS",
-    [KA_APP_FILES] = "APP FILES",
-    [KA_APP_OSC] = "APP OSC",
-    [KA_EXIT_APP] = "EXIT APP",
+    // TX / PTT
+    [KA_TX]   = "TX",
+    [KA_PTT]  = "PTT",
+    [KA_VOX]  = "VOX",
+    [KA_MONI] = "Monitor",
 
-    // Band & range actions
-    [KA_BAND_UP] = "BAND UP",
-    [KA_BAND_DOWN] = "BAND DOWN",
-    [KA_ZOOM_IN] = "ZOOM IN",
-    [KA_ZOOM_OUT] = "ZOOM OUT",
-    [KA_RANGE_INPUT] = "RANGE IN",
+    // Отображение
+    [KA_RSSI]          = "RSSI",
+    [KA_RSSI_GRAPH]    = "RSSI Graph",
+    [KA_ALWAYS_RSSI]   = "Always RSSI",
+    [KA_LEVEL_DISPLAY] = "Level Disp",
+    [KA_GRAPH_UNIT]    = "Graph Unit",
+    [KA_VFO_MENU]      = "VFO Menu",
+    [KA_RADIO_SETTINGS]= "Radio Regs",
+    [KA_PRO_MODE]      = "Pro Mode",
 
-    // PTT & TX actions
-    [KA_PTT] = "PTT",
+    // Полоса / диапазон
+    [KA_BANDS]       = "Bands",
+    [KA_CHANNELS]    = "Channels",
+    [KA_BAND_UP]     = "Band Up",
+    [KA_BAND_DOWN]   = "Band Down",
+    [KA_ZOOM_IN]     = "Zoom In",
+    [KA_ZOOM_OUT]    = "Zoom Out",
+    [KA_RANGE_INPUT] = "Range In",
 
-    // Quick settings
-    [KA_BL_MAX] = "BL MAX",
-    [KA_BL_MIN] = "BL MIN",
-    [KA_CONTRAST] = "CONTRAST",
-    [KA_BEEP] = "BEEP",
-    [KA_INVERT_BTNS] = "INV BUTTONS",
+    // Быстрые настройки
+    [KA_BL]          = "Backlight",
+    [KA_BL_MAX]      = "BL Max",
+    [KA_BL_MIN]      = "BL Min",
+    [KA_CONTRAST]    = "Contrast",
+    [KA_BEEP]        = "Beep",
+    [KA_INVERT_BTNS] = "Inv Btns",
+    [KA_FLASHLIGHT]  = "Flashlight",
+
+    // Прочее
+    [KA_FASTMENU1] = "Fast Menu 1",
+    [KA_FASTMENU2] = "Fast Menu 2",
 };
 
 static char keymapDir[16];
 static char keymapFile[32];
 
-void KEYMAP_Load() {
-  snprintf(keymapDir, 16, "/%s", apps[gCurrentApp].name);
-  snprintf(keymapFile, 32, "%s/keymap.key", keymapDir);
+void KEYMAP_Load(void) {
+  snprintf(keymapDir,  sizeof(keymapDir),  "/%s", apps[gCurrentApp].name);
+  snprintf(keymapFile, sizeof(keymapFile), "%s/keymap.key", keymapDir);
 
   struct lfs_info info;
   if (lfs_stat(&gLfs, keymapDir, &info) < 0) {
@@ -114,4 +107,6 @@ void KEYMAP_Load() {
   STORAGE_LOAD(keymapFile, 1, &gCurrentKeymap);
 }
 
-void KEYMAP_Save() { STORAGE_SAVE(keymapFile, 1, &gCurrentKeymap); }
+void KEYMAP_Save(void) {
+  STORAGE_SAVE(keymapFile, 1, &gCurrentKeymap);
+}

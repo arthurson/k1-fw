@@ -1,3 +1,4 @@
+#include "analyser.h"
 #include "apps.h"
 #include "../driver/st7565.h"
 #include "../driver/uart.h"
@@ -13,7 +14,6 @@
 #include "fc.h"
 #include "files.h"
 #include "messenger.h"
-#include "newscan.h"
 // #include "osc.h"
 #include "scaner.h"
 #include "settings.h"
@@ -57,7 +57,7 @@ AppType_t APPS_Peek(void) {
 const AppType_t appsAvailableToRun[RUN_APPS_COUNT] = {
     APP_VFO1,    //
     APP_SCANER,  //
-    APP_NEWSCAN, //
+    APP_ANALYSER, //
     APP_CMDSCAN, //
     APP_FC,      //
     // APP_OSC,       //
@@ -81,8 +81,8 @@ const App apps[APPS_COUNT] = {
                      CMDSCAN_key, CMDSCAN_deinit, true},
     [APP_CMDEDIT] = {"CMD Scan", CMDEDIT_init, NULL, CMDEDIT_render,
                      CMDEDIT_key, NULL},
-    [APP_NEWSCAN] = {"Analyzer", NEWSCAN_init, NEWSCAN_update, NEWSCAN_render,
-                     NEWSCAN_key, NEWSCAN_deinit, true},
+    [APP_ANALYSER] = {"Analyzer", ANALYSER_init, ANALYSER_update, ANALYSER_render,
+                     ANALYSER_key, ANALYSER_deinit, true},
     /* [APP_OSC] = {"OSC", OSC_init, OSC_update, OSC_render, OSC_key,
        OSC_deinit, true}, */
     [APP_MESSENGER] = {"MESSENGER", MESSENGER_init, MESSENGER_update,
@@ -140,7 +140,8 @@ void APPS_run(AppType_t app) {
 
   if (apps[gCurrentApp].needsRadioState) {
     if (gRadioState) {
-      RADIO_SaveCurrentVFO(gRadioState);
+      // Save ALL VFOs from current app before switching
+      RADIO_SaveAllVFOs(gRadioState);
     }
     if (!gRadioState) {
       // Один раз: выделяем структуру и настраиваем
@@ -162,9 +163,20 @@ bool APPS_exit(void) {
   if (stackIndex == 0) {
     return false;
   }
+  
+  // Save VFO state before exiting current app
+  if (gRadioState && apps[gCurrentApp].needsRadioState) {
+    RADIO_SaveAllVFOs(gRadioState);
+  }
+  
   APPS_deinit();
   AppType_t app = popApp();
   gCurrentApp = APPS_Peek();
+
+  // Load VFO state for the app we're returning to
+  if (apps[gCurrentApp].needsRadioState && gRadioState) {
+    RADIO_LoadVFOs(gRadioState);
+  }
 
   APPS_init(gCurrentApp);
 

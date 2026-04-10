@@ -1,4 +1,5 @@
 #include "cmdedit.h"
+#include "../driver/lfs.h"
 #include "../driver/st7565.h"
 #include "../driver/systick.h"
 #include "../driver/uart.h"
@@ -13,295 +14,393 @@
 #include "apps.h"
 #include <string.h>
 
-// ============================================================================
-// Контекст редактора
-// ============================================================================
-
 #define SCMD_MAX_COMMANDS 16
 
+// Small text: 5px высота, baseline = нижний пиксель
+// Medium text: 7px высота
+// EDIT_LINE_H: шаг строк в режиме редактирования
+#define EDIT_LINE_H 7
+#define EDIT_START_Y 17 // baseline первого поля (после заголовка+черты)
+
 typedef enum {
-  MODE_LIST, // Режим списка
-  MODE_EDIT, // Режим редактирования
+  MODE_LIST,
+  MODE_EDIT,
 } EditorMode;
 
 typedef struct {
-  uint16_t totalCommands; // Общее количество команд
-  SCMD_Command commands[SCMD_MAX_COMMANDS]; // Буфер команд
-  char filename[32]; // Имя редактируемого файла
-  bool modified;     // Флаг изменения
-  EditorMode mode;   // Текущий режим
-  uint8_t editField; // Поле для редактирования (в режиме EDIT)
+  uint16_t totalCommands;
+  SCMD_Command commands[SCMD_MAX_COMMANDS];
+  char filename[32];
+  bool modified;
+  EditorMode mode;
+  uint8_t editField;
 } EditContext;
 
 static EditContext gEditCtx;
 static Menu cmdMenu;
+static uint8_t selected_index;
 
-uint8_t selected_index;
+// Устанавливается из cmdscan.c перед APPS_run(APP_CMDEDIT)
+char gCmdEditFilename[32] = "/scans/cmd1.bin";
 
 // ============================================================================
-// Вспомогательные функции
+// Поля редактирования
+// ============================================================================
+
+static uint8_t getMaxField(uint8_t type) {
+  switch (type) {
+  case SCMD_RANGE:
+    return 5; // type,range(start+end),step,dwell,prio,flags
+  case SCMD_CHANNEL:
+    return 4; // type,start,dwell,prio,flags
+  case SCMD_JUMP:
+  case SCMD_CJUMP:
+    return 1; // type,goto
+  case SCMD_PAUSE:
+    return 1; // type,dwell
+  default:
+    return 0;
+  }
+}
+
+// ============================================================================
+// Файловые операции
 // ============================================================================
 
 static void LoadFile(const char *filename) {
   strcpy(gEditCtx.filename, filename);
 
-  // Открываем файл для чтения
   uint8_t buffer[256];
   struct lfs_file_config config = {.buffer = buffer, .attr_count = 0};
   lfs_file_t file;
 
   int err = lfs_file_opencfg(&gLfs, &file, filename, LFS_O_RDONLY, &config);
   if (err < 0) {
-    Log("[CMDEDIT] Failed to open %s", filename);
+    Log("[CMDEDIT] Open failed: %d (%s)", err, filename);
     gEditCtx.totalCommands = 0;
     return;
   }
 
-  // Пропускаем заголовок
   SCMD_Header header;
   lfs_file_read(&gLfs, &file, &header, sizeof(header));
 
   if (header.magic != SCMD_MAGIC) {
-    Log("[CMDEDIT] Invalid file format");
+    Log("[CMDEDIT] Bad magic: 0x%08X", header.magic);
     lfs_file_close(&gLfs, &file);
     gEditCtx.totalCommands = 0;
     return;
   }
 
-  // Читаем команды
   gEditCtx.totalCommands = header.cmd_count;
-  if (gEditCtx.totalCommands > SCMD_MAX_COMMANDS) {
+  if (gEditCtx.totalCommands > SCMD_MAX_COMMANDS)
     gEditCtx.totalCommands = SCMD_MAX_COMMANDS;
-  }
 
-  for (uint16_t i = 0; i < gEditCtx.totalCommands; i++) {
+  for (uint16_t i = 0; i < gEditCtx.totalCommands; i++)
     lfs_file_read(&gLfs, &file, &gEditCtx.commands[i], sizeof(SCMD_Command));
-  }
 
   lfs_file_close(&gLfs, &file);
   gEditCtx.modified = false;
+  Log("[CMDEDIT] Loaded %u cmds from %s", gEditCtx.totalCommands, filename);
+}
 
-  Log("[CMDEDIT] Loaded %u commands from %s", gEditCtx.totalCommands, filename);
+static void ShowMsg(const char *msg) {
+  FillRect(0, LCD_YCENTER - 5, LCD_WIDTH, 10, C_FILL);
+  PrintMediumBoldEx(LCD_XCENTER, LCD_YCENTER + 3, POS_C, C_INVERT, msg);
+  ST7565_Blit();
+  SYSTICK_DelayMs(800);
 }
 
 static void SaveFile(void) {
   if (gEditCtx.filename[0] == 0) {
+    Log("[CMDEDIT] SaveFile: no filename");
     return;
   }
 
-  // Создаем заголовок
-  SCMD_Header header = {.magic = SCMD_MAGIC,
-                        .version = SCMD_VERSION,
-                        .cmd_count = gEditCtx.totalCommands,
-                        .entry_point = 0,
-                        .crc32 = 0xDEADBEEF};
-
-  // Сохраняем в файл
-  if (SCMD_CreateFile(gEditCtx.filename, gEditCtx.commands,
-                      gEditCtx.totalCommands)) {
-    gEditCtx.modified = false;
-
-    // Показываем уведомление
-    FillRect(0, LCD_YCENTER - 4, LCD_WIDTH, 9, C_FILL);
-    PrintMediumBoldEx(LCD_XCENTER, LCD_YCENTER + 3, POS_C, C_INVERT, "Saved!");
-    ST7565_Blit();
-    SYSTICK_DelayMs(1000);
-
-    Log("[CMDEDIT] Saved %u commands to %s", gEditCtx.totalCommands,
-        gEditCtx.filename);
-  } else {
-    Log("[CMDEDIT] Failed to save commands");
+  // Создаём /scans/ если нет
+  struct lfs_info info;
+  if (lfs_stat(&gLfs, "/scans", &info) < 0) {
+    int r = lfs_mkdir(&gLfs, "/scans");
+    Log("[CMDEDIT] mkdir /scans: %d", r);
   }
+
+  // SCAN держит файл открытым через SCMD_Context — закрываем перед записью.
+  // Если lfs_open всё равно возвращает ошибку, нужно добавить в scan.c
+  // функцию SCAN_CloseCommandFile() которая вызывает SCMD_Close().
+  bool wasActive = SCAN_IsCommandMode();
+  if (wasActive) {
+    Log("[CMDEDIT] Stopping SCAN before save");
+    SCAN_SetCommandMode(false);
+  }
+
+  uint8_t filebuf[256];
+  struct lfs_file_config cfg = {.buffer = filebuf, .attr_count = 0};
+  lfs_file_t file;
+
+  int err = lfs_file_opencfg(&gLfs, &file, gEditCtx.filename,
+                             LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC, &cfg);
+  Log("[CMDEDIT] lfs_open(W): %d, file=%s", err, gEditCtx.filename);
+  if (err < 0) {
+    if (wasActive)
+      SCAN_LoadCommandFile(gEditCtx.filename);
+    ShowMsg("Save ERR!");
+    return;
+  }
+
+  SCMD_Header hdr = {
+      .magic = SCMD_MAGIC,
+      .version = SCMD_VERSION,
+      .cmd_count = gEditCtx.totalCommands,
+      .entry_point = 0,
+      .crc32 = 0xDEADBEEF,
+  };
+
+  lfs_ssize_t w1 = lfs_file_write(&gLfs, &file, &hdr, sizeof(hdr));
+  lfs_ssize_t w2 =
+      lfs_file_write(&gLfs, &file, gEditCtx.commands,
+                     sizeof(SCMD_Command) * gEditCtx.totalCommands);
+  lfs_file_close(&gLfs, &file);
+
+  Log("[CMDEDIT] w_hdr=%d w_cmds=%d (need %d+%d)", (int)w1, (int)w2,
+      (int)sizeof(hdr), (int)(sizeof(SCMD_Command) * gEditCtx.totalCommands));
+
+  bool ok =
+      (w1 == (lfs_ssize_t)sizeof(hdr)) &&
+      (w2 == (lfs_ssize_t)(sizeof(SCMD_Command) * gEditCtx.totalCommands));
+
+  if (ok) {
+    gEditCtx.modified = false;
+    Log("[CMDEDIT] Saved OK: %u cmds to %s", gEditCtx.totalCommands,
+        gEditCtx.filename);
+  }
+
+  if (wasActive)
+    SCAN_LoadCommandFile(gEditCtx.filename);
+
+  ShowMsg(ok ? "Saved!" : "Save ERR!");
 }
 
 // ============================================================================
-// Функции работы с командами
+// Операции с командами
 // ============================================================================
 
 static void AddCommand(void) {
-  if (gEditCtx.totalCommands >= SCMD_MAX_COMMANDS) {
+  if (gEditCtx.totalCommands >= SCMD_MAX_COMMANDS)
     return;
-  }
-
-  // Создаем новую команду с дефолтными значениями
-  SCMD_Command newCmd = {.type = SCMD_CHANNEL,
-                         .start = 100000000, // 100 MHz
-                         .end = 100000000,
-                         .step = 12500,
-                         .dwell_ms = 100,
-                         .priority = 0,
-                         .flags = 0};
-
-  gEditCtx.commands[gEditCtx.totalCommands] = newCmd;
-  gEditCtx.totalCommands++;
+  SCMD_Command newCmd = {
+      .type = SCMD_CHANNEL,
+      .start = 100000000,
+      .end = 100000000,
+      .step = 12500,
+      .dwell_ms = 100,
+      .priority = 0,
+      .flags = 0,
+  };
+  gEditCtx.commands[gEditCtx.totalCommands++] = newCmd;
   gEditCtx.modified = true;
-
   cmdMenu.num_items = gEditCtx.totalCommands;
 }
 
 static void DeleteCommand(uint16_t index) {
-  if (index >= gEditCtx.totalCommands) {
+  if (index >= gEditCtx.totalCommands)
     return;
-  }
-
-  // Сдвигаем все команды после удаляемой
-  for (uint16_t i = index; i < gEditCtx.totalCommands - 1; i++) {
+  for (uint16_t i = index; i < gEditCtx.totalCommands - 1; i++)
     gEditCtx.commands[i] = gEditCtx.commands[i + 1];
-  }
-
   gEditCtx.totalCommands--;
   gEditCtx.modified = true;
-
   cmdMenu.num_items = gEditCtx.totalCommands;
 }
 
 static void DuplicateCommand(uint16_t index) {
   if (gEditCtx.totalCommands >= SCMD_MAX_COMMANDS ||
-      index >= gEditCtx.totalCommands) {
+      index >= gEditCtx.totalCommands)
     return;
-  }
-
-  // Копируем команду в конец списка
-  gEditCtx.commands[gEditCtx.totalCommands] = gEditCtx.commands[index];
-  gEditCtx.totalCommands++;
+  gEditCtx.commands[gEditCtx.totalCommands++] = gEditCtx.commands[index];
   gEditCtx.modified = true;
-
   cmdMenu.num_items = gEditCtx.totalCommands;
 }
 
 // ============================================================================
-// Режим редактирования команды
+// Callbacks для FINPUT
 // ============================================================================
 
-static void setCommandFreq(uint32_t fs, uint32_t fe) {
-  uint16_t index = selected_index;
-  gEditCtx.commands[index].start = fs;
-  gEditCtx.commands[index].end = fe;
+static void cbSetFreq(uint32_t fs, uint32_t fe) {
+  gEditCtx.commands[selected_index].start = fs;
+  gEditCtx.commands[selected_index].end = fe;
   gEditCtx.modified = true;
   gFInputActive = false;
 }
 
-static void setCommandDwell(uint32_t dwell, uint32_t _) {
-  uint16_t index = selected_index;
-  gEditCtx.commands[index].dwell_ms = dwell;
+static void cbSetDwell(uint32_t dwell, uint32_t _) {
+  gEditCtx.commands[selected_index].dwell_ms = dwell;
   gEditCtx.modified = true;
   gFInputActive = false;
 }
 
-static void setCommandStep(uint32_t step, uint32_t _) {
-  uint16_t index = selected_index;
-  gEditCtx.commands[index].step = step;
+static void cbSetStep(uint32_t step, uint32_t _) {
+  gEditCtx.commands[selected_index].step = step;
   gEditCtx.modified = true;
   gFInputActive = false;
 }
+
+static void cbSetGoto(uint32_t offset, uint32_t _) {
+  gEditCtx.commands[selected_index].goto_offset = (uint16_t)offset;
+  gEditCtx.modified = true;
+  gFInputActive = false;
+}
+
+// ============================================================================
+// Редактирование поля
+// ============================================================================
 
 static void EditCommandField(uint16_t index, uint8_t field) {
   SCMD_Command *cmd = &gEditCtx.commands[index];
 
-  switch (field) {
-  case 0: // Тип команды
+  if (field == 0) {
     cmd->type = (cmd->type + 1) % SCMD_COUNT;
+    gEditCtx.editField = 0;
     gEditCtx.modified = true;
-    break;
-
-  case 1: // Начальная частота
-    gFInputCallback = setCommandFreq;
-    FINPUT_setup(0, BK4819_F_MAX, UNIT_MHZ, cmd->type == SCMD_RANGE);
-    gFInputValue1 = 0;
-    gFInputValue2 = 0;
-    FINPUT_init();
-    gFInputActive = true;
     return;
+  }
 
-  case 2: // Конечная частота (для RANGE)
-    if (cmd->type == SCMD_RANGE) {
-      gFInputCallback = setCommandFreq;
-      FINPUT_setup(0, BK4819_F_MAX, UNIT_MHZ, cmd->type == SCMD_RANGE);
-      gFInputValue1 = 0;
+  switch (cmd->type) {
+  case SCMD_CHANNEL:
+    switch (field) {
+    case 1:
+      gFInputCallback = cbSetFreq;
+      FINPUT_setup(0, BK4819_F_MAX, UNIT_MHZ, false);
+      gFInputValue1 = cmd->start;
       gFInputValue2 = 0;
       FINPUT_init();
       gFInputActive = true;
+      break;
+    case 2:
+      gFInputCallback = cbSetDwell;
+      FINPUT_setup(0, 60000, UNIT_MS, false);
+      gFInputValue1 = cmd->dwell_ms;
+      FINPUT_init();
+      gFInputActive = true;
+      break;
+    case 3:
+      cmd->priority = (cmd->priority + 1) % 10;
+      gEditCtx.modified = true;
+      break;
+    case 4:
+      cmd->flags ^= SCMD_FLAG_AUTO_WHITELIST;
+      gEditCtx.modified = true;
+      break;
     }
-    return;
+    break;
 
-  case 3: // Шаг (для RANGE)
-    if (cmd->type == SCMD_RANGE) {
-      gFInputCallback = setCommandStep;
-      FINPUT_setup(100, 100000, UNIT_HZ, false);
+  case SCMD_RANGE:
+    switch (field) {
+    case 1: // range: start+end вместе, как в scaner.c setRange
+      gFInputCallback = cbSetFreq;
+      FINPUT_setup(0, BK4819_F_MAX, UNIT_MHZ, true);
+      gFInputValue1 = cmd->start;
+      gFInputValue2 = cmd->end;
+      FINPUT_init();
+      gFInputActive = true;
+      break;
+    case 2: // step
+      gFInputCallback = cbSetStep;
+      FINPUT_setup(1, 100000, UNIT_KHZ, false);
       gFInputValue1 = cmd->step;
       FINPUT_init();
       gFInputActive = true;
+      break;
+    case 3: // dwell
+      gFInputCallback = cbSetDwell;
+      FINPUT_setup(0, 60000, UNIT_MS, false);
+      gFInputValue1 = cmd->dwell_ms;
+      FINPUT_init();
+      gFInputActive = true;
+      break;
+    case 4: // priority
+      cmd->priority = (cmd->priority + 1) % 10;
+      gEditCtx.modified = true;
+      break;
+    case 5: // flags
+      cmd->flags ^= SCMD_FLAG_AUTO_WHITELIST;
+      gEditCtx.modified = true;
+      break;
     }
-    return;
-
-  case 4: // Пауза
-    gFInputCallback = setCommandDwell;
-    FINPUT_setup(0, 60000, UNIT_MS, false);
-    gFInputValue1 = cmd->dwell_ms;
-    FINPUT_init();
-    gFInputActive = true;
-    return;
-
-  case 5: // Приоритет
-    cmd->priority = (cmd->priority + 1) % 10;
-    gEditCtx.modified = true;
     break;
 
-  case 6: // Флаги
-    cmd->flags ^= SCMD_FLAG_AUTO_WHITELIST;
-    gEditCtx.modified = true;
+  case SCMD_JUMP:
+  case SCMD_CJUMP:
+    if (field == 1) {
+      gFInputCallback = cbSetGoto;
+      FINPUT_setup(0, 65535, UNIT_HZ, false);
+      gFInputValue1 = cmd->goto_offset;
+      FINPUT_init();
+      gFInputActive = true;
+    }
+    break;
+
+  case SCMD_PAUSE:
+    if (field == 1) {
+      gFInputCallback = cbSetDwell;
+      FINPUT_setup(0, 60000, UNIT_MS, false);
+      gFInputValue1 = cmd->dwell_ms;
+      FINPUT_init();
+      gFInputActive = true;
+    }
     break;
   }
 }
 
 // ============================================================================
-// Отображение списка команд
+// Отображение списка
 // ============================================================================
 
 static void renderCommandItem(uint16_t index, uint8_t i) {
   const SCMD_Command *cmd = &gEditCtx.commands[index];
-  const uint8_t y = MENU_Y + i * MENU_ITEM_H;
-  const uint8_t ty = y + 7;
+  const uint8_t ty = MENU_Y + i * MENU_ITEM_H + 7;
 
-  // Номер и тип команды
   PrintMediumEx(2, ty, POS_L, C_FILL, "%u:%s", index + 1,
                 SCMD_NAMES_SHORT[cmd->type]);
 
-  // Информация о команде
   switch (cmd->type) {
   case SCMD_RANGE:
     PrintSmallEx(40, ty, POS_L, C_INVERT, "%lu-%lu", cmd->start / KHZ,
                  cmd->end / KHZ);
-    PrintSmallEx(LCD_WIDTH - 22, ty, POS_R, C_INVERT, "%u", cmd->step / KHZ);
+    PrintSmallEx(LCD_WIDTH - 2, ty, POS_R, C_INVERT, "%luk", cmd->step / KHZ);
     break;
-
   case SCMD_CHANNEL:
     PrintSmallEx(40, ty, POS_L, C_INVERT, "%lu.%05lu", cmd->start / MHZ,
                  cmd->start % MHZ);
     break;
-
   case SCMD_PAUSE:
     PrintSmallEx(40, ty, POS_L, C_INVERT, "%ums", cmd->dwell_ms);
     break;
-
   case SCMD_JUMP:
+  case SCMD_CJUMP:
+    PrintSmallEx(40, ty, POS_L, C_INVERT, "->%u", cmd->goto_offset);
+    break;
   case SCMD_MARKER:
-    PrintSmallEx(40, ty, POS_L, C_INVERT, "---");
+    PrintSmallEx(40, ty, POS_L, C_INVERT, "[%u]", index);
+    break;
+  default:
     break;
   }
 
-  // Приоритет и флаги
-  if (cmd->priority > 0) {
-    PrintSmallEx(LCD_WIDTH - 5, ty, POS_R, C_INVERT, "P%u", cmd->priority);
-  }
-  if (cmd->flags & SCMD_FLAG_AUTO_WHITELIST) {
-    PrintSmallEx(LCD_WIDTH - 5, ty, POS_R, C_INVERT, "W");
-  }
+  if (cmd->priority > 0)
+    PrintSmallEx(LCD_WIDTH - 2, ty, POS_R, C_INVERT, "P%u", cmd->priority);
+  else if (cmd->flags & SCMD_FLAG_AUTO_WHITELIST)
+    PrintSmallEx(LCD_WIDTH - 2, ty, POS_R, C_INVERT, "W");
 }
 
 // ============================================================================
 // Отображение режима редактирования
 // ============================================================================
+
+// Baseline y для поля f
+#define FIELD_Y(f) (EDIT_START_Y + (f) * EDIT_LINE_H)
+
+// Строка поля: сначала FillRect подсветит, потом рисуем текст
+#define ROW(f, fmt, ...)                                                       \
+  PrintSmallEx(3, FIELD_Y(f), POS_L, sel == (f) ? C_INVERT : C_FILL, fmt,      \
+               ##__VA_ARGS__)
 
 static void renderEditMode(void) {
   if (gFInputActive) {
@@ -310,61 +409,65 @@ static void renderEditMode(void) {
   }
 
   uint16_t index = selected_index;
-  if (index >= gEditCtx.totalCommands) {
+  if (index >= gEditCtx.totalCommands)
     return;
-  }
 
   SCMD_Command *cmd = &gEditCtx.commands[index];
+  uint8_t sel = gEditCtx.editField;
 
-  // Заголовок
-  PrintMediumEx(LCD_XCENTER, 16, POS_C, C_FILL, "Edit Cmd %u: %s", index + 1,
-                SCMD_NAMES_SHORT[cmd->type]);
+  // Заголовок: medium 7px, baseline y=8, пиксели строк 2..8
+  PrintMediumEx(LCD_XCENTER, 8, POS_C, C_FILL, "#%u %s%s", index + 1,
+                SCMD_NAMES_SHORT[cmd->type], gEditCtx.modified ? "*" : "");
 
-  uint8_t y = 22;
-  const uint8_t lineH = 6;
+  // Черта под заголовком: y=10
+  DrawLine(0, 10, LCD_WIDTH - 1, 10, C_FILL);
 
-  // Поля для редактирования
-  bool highlight = gEditCtx.editField == 0;
-  PrintSmallEx(2, y, POS_L, highlight ? C_INVERT : C_FILL, "[0] Type: %s",
-               SCMD_NAMES[cmd->type]);
-  y += lineH;
+  // Подсветка выбранной строки:
+  // baseline = FIELD_Y(sel), small text: пиксели [baseline-4..baseline]
+  // rect: top = baseline-5, height = 7 (по 1px отступа сверху и снизу)
+  FillRect(0, FIELD_Y(sel) - 5, LCD_WIDTH, 7, C_FILL);
 
-  highlight = gEditCtx.editField == 1;
-  PrintSmallEx(2, y, POS_L, highlight ? C_INVERT : C_FILL,
-               "[1] Start: %lu.%05lu", cmd->start / 100000,
-               cmd->start % 100000);
-  y += lineH;
+  // Поле 0: тип (всегда)
+  ROW(0, "Type: %s", SCMD_NAMES[cmd->type]);
 
-  if (cmd->type == SCMD_RANGE) {
-    highlight = gEditCtx.editField == 2;
-    PrintSmallEx(2, y, POS_L, highlight ? C_INVERT : C_FILL,
-                 "[2] End: %lu.%05lu", cmd->end / 100000, cmd->end % 100000);
-    y += lineH;
+  // Поля 1..N по типу команды
+  // При lineH=7, startY=17: позиции 17,24,31,38,45,52,59 — все внутри 64px
+  switch (cmd->type) {
+  case SCMD_CHANNEL:
+    ROW(1, "Freq: %lu.%05lu", cmd->start / MHZ, cmd->start % MHZ);
+    ROW(2, "Dwell: %ums", cmd->dwell_ms);
+    ROW(3, "Prio: %u", cmd->priority);
+    ROW(4, "AutoWL: %s",
+        (cmd->flags & SCMD_FLAG_AUTO_WHITELIST) ? "ON" : "OFF");
+    break;
 
-    highlight = gEditCtx.editField == 3;
-    PrintSmallEx(2, y, POS_L, highlight ? C_INVERT : C_FILL, "[3] Step: %lu",
-                 cmd->step);
-    y += lineH;
+  case SCMD_RANGE:
+    // Диапазон в одну строку, вызов как в scaner.c (FINPUT с isRange=true)
+    ROW(1, "%lu.%03lu-%lu.%03lu", cmd->start / MHZ, (cmd->start % MHZ) / 1000,
+        cmd->end / MHZ, (cmd->end % MHZ) / 1000);
+    ROW(2, "Step: %luHz", cmd->step * 10);
+    ROW(3, "Dwell: %ums", cmd->dwell_ms);
+    ROW(4, "Prio: %u", cmd->priority);
+    ROW(5, "AutoWL: %s",
+        (cmd->flags & SCMD_FLAG_AUTO_WHITELIST) ? "ON" : "OFF");
+    break;
+
+  case SCMD_JUMP:
+  case SCMD_CJUMP:
+    ROW(1, "Goto: %u", cmd->goto_offset);
+    break;
+
+  case SCMD_PAUSE:
+    ROW(1, "Dwell: %ums", cmd->dwell_ms);
+    break;
+
+  default:
+    break;
   }
-
-  highlight = gEditCtx.editField == 4;
-  PrintSmallEx(2, y, POS_L, highlight ? C_INVERT : C_FILL, "[4] Dwell: %u ms",
-               cmd->dwell_ms);
-  y += lineH;
-
-  highlight = gEditCtx.editField == 5;
-  PrintSmallEx(2, y, POS_L, highlight ? C_INVERT : C_FILL, "[5] Priority: %u",
-               cmd->priority);
-  y += lineH;
-
-  highlight = gEditCtx.editField == 6;
-  PrintSmallEx(2, y, POS_L, highlight ? C_INVERT : C_FILL, "[6] Auto-WL: %s",
-               (cmd->flags & SCMD_FLAG_AUTO_WHITELIST) ? "ON" : "OFF");
-
-  // Подсказки
-  PrintSmallEx(2, LCD_HEIGHT - 2, POS_L, C_FILL,
-               "0-6:Field MENU:Chg EXIT:List");
 }
+
+#undef ROW
+#undef FIELD_Y
 
 // ============================================================================
 // Обработка ввода
@@ -375,13 +478,11 @@ static bool listModeAction(const uint16_t index, KEY_Code_t key,
   if (state == KEY_LONG_PRESSED) {
     switch (key) {
     case KEY_0:
-      // Очистить все команды
       gEditCtx.totalCommands = 0;
       gEditCtx.modified = true;
       cmdMenu.num_items = 0;
       return true;
     case KEY_F:
-      // Сохранить
       SaveFile();
       return true;
     default:
@@ -392,44 +493,30 @@ static bool listModeAction(const uint16_t index, KEY_Code_t key,
   if (state == KEY_RELEASED) {
     switch (key) {
     case KEY_EXIT:
-      if (gEditCtx.modified) {
+      if (gEditCtx.modified)
         SaveFile();
-      }
       APPS_exit();
       return true;
-
     case KEY_MENU:
-      // Войти в режим редактирования
       gEditCtx.mode = MODE_EDIT;
       gEditCtx.editField = 0;
       selected_index = index;
       return true;
-
     case KEY_F:
-      // Сохранить
       SaveFile();
       return true;
-
     case KEY_STAR:
-      // Запуск сканирования
       SCAN_LoadCommandFile(gEditCtx.filename);
       return true;
-
     case KEY_1:
-      // Добавить команду
       AddCommand();
       return true;
-
     case KEY_2:
-      // Дублировать команду
       DuplicateCommand(index);
       return true;
-
     case KEY_0:
-      // Удалить команду
       DeleteCommand(index);
       return true;
-
     default:
       break;
     }
@@ -439,53 +526,34 @@ static bool listModeAction(const uint16_t index, KEY_Code_t key,
 }
 
 static bool editModeKey(KEY_Code_t key, Key_State_t state) {
-  if (gFInputActive) {
+  if (gFInputActive)
     return false;
-  }
 
   uint16_t index = selected_index;
-  if (index >= gEditCtx.totalCommands) {
+  if (index >= gEditCtx.totalCommands)
     return false;
-  }
+
+  SCMD_Command *cmd = &gEditCtx.commands[index];
 
   if (state == KEY_RELEASED) {
     switch (key) {
     case KEY_EXIT:
-      // Вернуться в список
       gEditCtx.mode = MODE_LIST;
       return true;
-
     case KEY_MENU:
-      // Изменить текущее поле
       EditCommandField(index, gEditCtx.editField);
       return true;
-
     case KEY_UP:
-      // Предыдущее поле
-      if (gEditCtx.editField > 0) {
+      if (gEditCtx.editField > 0)
         gEditCtx.editField--;
-      }
       return true;
-
     case KEY_DOWN:
-      // Следующее поле
-      if (gEditCtx.editField < 6) {
+      if (gEditCtx.editField < getMaxField(cmd->type))
         gEditCtx.editField++;
-      }
       return true;
-
-    case KEY_0:
-    case KEY_1:
-    case KEY_2:
-    case KEY_3:
-    case KEY_4:
-    case KEY_5:
-    case KEY_6:
-      // Быстрый выбор поля
-      gEditCtx.editField = key - KEY_0;
-      EditCommandField(index, gEditCtx.editField);
+    case KEY_F:
+      SaveFile();
       return true;
-
     default:
       break;
     }
@@ -495,20 +563,17 @@ static bool editModeKey(KEY_Code_t key, Key_State_t state) {
 }
 
 bool CMDEDIT_key(KEY_Code_t key, Key_State_t state) {
-  if (gEditCtx.mode == MODE_EDIT) {
+  if (gEditCtx.mode == MODE_EDIT)
     return editModeKey(key, state);
-  }
 
-  // Режим списка
-  if (MENU_HandleInput(key, state)) {
+  if (MENU_HandleInput(key, state))
     return true;
-  }
 
   return false;
 }
 
 // ============================================================================
-// Отображение
+// Отображение (список)
 // ============================================================================
 
 void CMDEDIT_render(void) {
@@ -517,23 +582,26 @@ void CMDEDIT_render(void) {
     return;
   }
 
-  // Режим списка
   if (gEditCtx.totalCommands == 0) {
-    PrintMediumEx(LCD_XCENTER, 40, POS_C, C_FILL, "No commands");
-    PrintSmallEx(LCD_XCENTER, 50, POS_C, C_FILL, "Press 1 to add");
+    PrintMediumEx(LCD_XCENTER, 30, POS_C, C_FILL, "No commands");
+    PrintSmallEx(LCD_XCENTER, 42, POS_C, C_FILL, "1:Add  F:Save");
     return;
   }
 
   MENU_Render();
 
-  // Подсказки
-  PrintSmallEx(2, LCD_HEIGHT - 2, POS_L, C_FILL,
-               "MENU:Edit 1:Add 2:Dup 0:Del F:Save *:Run");
+  // Подсказка: baseline y=63, пиксели 59..63 — самый низ экрана
+  PrintSmallEx(2, 63, POS_L, C_FILL, "MENU:Edit 1:+ 2:Dup 0:Del F:Save");
 }
 
 // ============================================================================
 // Инициализация
 // ============================================================================
+
+void CMDEDIT_SetFilename(const char *filename) {
+  strncpy(gCmdEditFilename, filename, sizeof(gCmdEditFilename) - 1);
+  gCmdEditFilename[sizeof(gCmdEditFilename) - 1] = 0;
+}
 
 static void initMenu(void) {
   cmdMenu.num_items = gEditCtx.totalCommands;
@@ -544,20 +612,15 @@ static void initMenu(void) {
   MENU_Init(&cmdMenu);
 }
 
-void CMDEDIT_init() {
+void CMDEDIT_init(void) {
   memset(&gEditCtx, 0, sizeof(gEditCtx));
   gEditCtx.mode = MODE_LIST;
-
-  LoadFile("/scans/cmd1.bin");
+  LoadFile(gCmdEditFilename);
   initMenu();
-
-  STATUSLINE_SetText("CMD edit %s%s", gEditCtx.filename,
-                     gEditCtx.modified ? "*" : "");
+  STATUSLINE_SetText("CMD: %s", gCmdEditFilename);
 }
 
-void CMDEDIT_update() {
-  // Обновление статусной строки при изменениях
-  if (gEditCtx.modified) {
-    STATUSLINE_SetText("CMD edit %s*", gEditCtx.filename);
-  }
+void CMDEDIT_update(void) {
+  if (gEditCtx.modified)
+    STATUSLINE_SetText("CMD: %s*", gEditCtx.filename);
 }

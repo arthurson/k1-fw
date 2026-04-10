@@ -22,11 +22,13 @@
 #include "helper/fsk2.h"
 #include "helper/keymap.h"
 #include "helper/lootlist.h"
-#include "helper/menu.h"
 #include "helper/measurements.h"
+#include "helper/menu.h"
+#include "helper/regs-menu.h"
 #include "helper/scan.h"
 #include "helper/screenshot.h"
 #include "helper/storage.h"
+#include "helper/vfomenu.h"
 #include "inc/channel.h"
 #include "misc.h"
 #include "settings.h"
@@ -39,9 +41,6 @@
 #include "ui/statusline.h"
 #include "ui/textinput.h"
 #include "ui/toast.h"
-#include "helper/regs-menu.h"
-#include "helper/vfomenu.h"
-#include "helper/scan.h"
 #include <string.h>
 
 static uint32_t secondTimer;
@@ -136,6 +135,21 @@ static bool checkKeylock(KEY_State_t state, KEY_Code_t key) {
   return gSettings.keylock && (gSettings.pttLock || !isSpecialKey);
 }
 
+// Шаговый inc/dec: param > 0 = вверх N раз, param < 0 = вниз N раз,
+// KA_PARAM_DEFAULT = 1 раз defaultUp
+static void setOrInc(VFOContext *ctx, AppAction_t act, ParamType pt,
+                     bool defaultUp) {
+  if (act.param == KA_PARAM_DEFAULT) {
+    RADIO_IncDecParam(ctx, pt, defaultUp, true);
+    return;
+  }
+  bool up = act.param > 0;
+  int16_t n = up ? act.param : -act.param;
+  for (int16_t i = 0; i < n; i++) {
+    RADIO_IncDecParam(ctx, pt, up, i == n - 1);
+  }
+}
+
 static bool keyAction(AppAction_t act) {
   VFOContext *ctx = &RADIO_GetCurrentVFO(gRadioState)->context;
 
@@ -151,39 +165,31 @@ static bool keyAction(AppAction_t act) {
   // Radio Parameter Actions
   // ========================================================================
   case KA_STEP:
-    RADIO_IncDecParam(ctx, PARAM_STEP, true, true);
+    setOrInc(ctx, act, PARAM_STEP, true);
     return true;
 
   case KA_BW:
-    RADIO_IncDecParam(ctx, PARAM_BANDWIDTH, true, true);
+    setOrInc(ctx, act, PARAM_BANDWIDTH, true);
     return true;
 
   case KA_GAIN:
-    RADIO_IncDecParam(ctx, PARAM_GAIN, true, true);
+    setOrInc(ctx, act, PARAM_GAIN, true);
     return true;
 
   case KA_POWER:
-    RADIO_IncDecParam(ctx, PARAM_POWER, true, true);
+    setOrInc(ctx, act, PARAM_POWER, true);
     return true;
 
   case KA_MODULATION:
-    RADIO_IncDecParam(ctx, PARAM_MODULATION, true, true);
+    setOrInc(ctx, act, PARAM_MODULATION, true);
     return true;
 
-  case KA_SQUELCH_UP:
-    RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, true, true);
+  case KA_SQUELCH:
+    setOrInc(ctx, act, PARAM_SQUELCH_VALUE, true);
     return true;
 
-  case KA_SQUELCH_DOWN:
-    RADIO_IncDecParam(ctx, PARAM_SQUELCH_VALUE, false, true);
-    return true;
-
-  case KA_OFFSET_UP:
-    RADIO_IncDecParam(ctx, PARAM_TX_OFFSET, true, true);
-    return true;
-
-  case KA_OFFSET_DOWN:
-    RADIO_IncDecParam(ctx, PARAM_TX_OFFSET, false, true);
+  case KA_OFFSET:
+    setOrInc(ctx, act, PARAM_TX_OFFSET, true);
     return true;
 
   case KA_OFFSET_DIR:
@@ -191,31 +197,31 @@ static bool keyAction(AppAction_t act) {
     return true;
 
   case KA_RADIO:
-    RADIO_IncDecParam(ctx, PARAM_RADIO, true, true);
+    setOrInc(ctx, act, PARAM_RADIO, true);
     return true;
 
   case KA_FILTER:
-    RADIO_IncDecParam(ctx, PARAM_FILTER, true, true);
+    setOrInc(ctx, act, PARAM_FILTER, true);
     return true;
 
   case KA_AFC:
-    RADIO_IncDecParam(ctx, PARAM_AFC, true, true);
+    setOrInc(ctx, act, PARAM_AFC, true);
     return true;
 
   case KA_DEV:
-    RADIO_IncDecParam(ctx, PARAM_DEV, true, true);
+    setOrInc(ctx, act, PARAM_DEV, true);
     return true;
 
   case KA_XTAL:
-    RADIO_IncDecParam(ctx, PARAM_XTAL, true, true);
+    setOrInc(ctx, act, PARAM_XTAL, true);
     return true;
 
   case KA_SCRAMBLER:
-    RADIO_IncDecParam(ctx, PARAM_SCRAMBLER, true, true);
+    setOrInc(ctx, act, PARAM_SCRAMBLER, true);
     return true;
 
   case KA_VOLUME:
-    RADIO_IncDecParam(ctx, PARAM_VOLUME, true, true);
+    setOrInc(ctx, act, PARAM_VOLUME, true);
     return true;
 
   // ========================================================================
@@ -273,7 +279,6 @@ static bool keyAction(AppAction_t act) {
     return true;
 
   case KA_VOX:
-    // VOX toggle - implement if needed
     return true;
 
   // ========================================================================
@@ -351,60 +356,29 @@ static bool keyAction(AppAction_t act) {
     return true;
 
   case KA_SAVE_LOOT_CH:
-    // Save loot to channels - implement if needed
     return true;
 
   // ========================================================================
   // Band & Range Actions
   // ========================================================================
   case KA_BANDS:
-    // Open bands menu - implement if needed
-    return true;
-
   case KA_CHANNELS:
-    // Open channels menu - implement if needed
-    return true;
-
   case KA_BAND_UP:
   case KA_BAND_DOWN:
-    // Band shift - scanner specific
-    return true;
-
   case KA_ZOOM_IN:
   case KA_ZOOM_OUT:
-    // Range zoom - scanner specific
-    return true;
-
   case KA_RANGE_INPUT:
-    // Range input - scanner specific
     return true;
 
   // ========================================================================
   // Application Control
   // ========================================================================
-  case KA_APP_VFO1:
-    APPS_run(APP_VFO1);
+  case KA_APP_LAUNCH:
+    if (act.param != KA_PARAM_DEFAULT && act.param >= 0 &&
+        act.param < (int16_t)ARRAY_SIZE(apps)) {
+      APPS_run((AppType_t)act.param);
+    }
     return true;
-
-  case KA_APP_SCAN:
-    APPS_run(APP_SCANER);
-    return true;
-
-  case KA_APP_FC:
-    APPS_run(APP_FC);
-    return true;
-
-  case KA_APP_SETTINGS:
-    APPS_run(APP_SETTINGS);
-    return true;
-
-  case KA_APP_FILES:
-    APPS_run(APP_FILES);
-    return true;
-
-  /* case KA_APP_OSC:
-    APPS_run(APP_OSC);
-    return true; */
 
   case KA_EXIT_APP:
     APPS_exit();
@@ -415,11 +389,6 @@ static bool keyAction(AppAction_t act) {
   // ========================================================================
   case KA_FASTMENU1:
   case KA_FASTMENU2:
-    // Fast menu slots - implement if needed
-    return true;
-
-  case KA_CH_SETTING:
-    APPS_run(APP_SETTINGS);
     return true;
 
   case KA_BL:
@@ -428,7 +397,6 @@ static bool keyAction(AppAction_t act) {
   case KA_CONTRAST:
   case KA_BEEP:
   case KA_INVERT_BTNS:
-    // Settings shortcuts - implement if needed
     return true;
 
   case KA_NONE:
@@ -589,5 +557,7 @@ void SYS_Main(void) {
     }
 
     appRender();
+
+    __WFI();
   }
 }
