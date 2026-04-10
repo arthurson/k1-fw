@@ -83,7 +83,7 @@ int main(void) {
   BOARD_Init();
   GPIO_TurnOnBacklight();
 
-  AUDIO_IO_Init();
+  // AUDIO_IO_Init(); // Отключено — ADC/DAC DMA создают RF помехи
 
   SYS_Main();
 }

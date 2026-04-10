@@ -20,11 +20,10 @@
 #include "ui/graphics.h"
 #include <stdint.h>
 
-// DMA buffer: CH9 only (APRS audio).
-// Layout: [half-A: APRS_BUFFER_SIZE samples | half-B: APRS_BUFFER_SIZE samples]
-// HT fires when half-A is full; TC fires when half-B is full.
-volatile uint16_t adc_dma_buffer[2 * APRS_BUFFER_SIZE]
-    __attribute__((aligned(4)));
+// DMA buffer: CH9 only (APRS audio) — отключено, RF помехи
+// volatile uint16_t adc_dma_buffer[2 * APRS_BUFFER_SIZE]
+//     __attribute__((aligned(4)));
+static volatile uint16_t adc_dma_buffer_dummy[1];
 
 volatile bool aprs_ready1 = false;
 volatile bool aprs_ready2 = false;
@@ -46,11 +45,10 @@ void BOARD_DMA_Init(void) {
 
   DMA_InitStruct.Direction = LL_DMA_DIRECTION_PERIPH_TO_MEMORY;
   DMA_InitStruct.PeriphOrM2MSrcAddress = (uint32_t)&ADC1->DR;
-  DMA_InitStruct.MemoryOrM2MDstAddress = (uint32_t)adc_dma_buffer;
+  DMA_InitStruct.MemoryOrM2MDstAddress = (uint32_t)adc_dma_buffer_dummy;
   DMA_InitStruct.PeriphOrM2MSrcDataSize = LL_DMA_PDATAALIGN_HALFWORD;
   DMA_InitStruct.MemoryOrM2MDstDataSize = LL_DMA_MDATAALIGN_HALFWORD;
-  DMA_InitStruct.NbData =
-      2 * APRS_BUFFER_SIZE; // single channel, two ping-pong halves
+  DMA_InitStruct.NbData = 1;
   DMA_InitStruct.PeriphOrM2MSrcIncMode = LL_DMA_PERIPH_NOINCREMENT;
   DMA_InitStruct.MemoryOrM2MDstIncMode = LL_DMA_MEMORY_INCREMENT;
   DMA_InitStruct.Mode = LL_DMA_MODE_CIRCULAR;
@@ -268,29 +266,10 @@ uint32_t BOARD_ADC_GetAvailableAPRS_DMA(void) {
 }
 
 uint32_t BOARD_ADC_ReadAPRS_DMA(uint16_t *dest, uint32_t max_samples) {
-  if (max_samples < APRS_BUFFER_SIZE) {
-    return 0;
-  }
-
-  const volatile uint16_t *src = NULL;
-  volatile bool *flag = NULL;
-
-  if (aprs_ready1) {
-    src = &adc_dma_buffer[0];
-    flag = &aprs_ready1;
-  } else if (aprs_ready2) {
-    src = &adc_dma_buffer[APRS_BUFFER_SIZE];
-    flag = &aprs_ready2;
-  } else {
-    return 0;
-  }
-
-  for (int i = 0; i < APRS_BUFFER_SIZE; i++) {
-    dest[i] = src[i];
-  }
-  *flag = false;
-
-  return APRS_BUFFER_SIZE;
+  // Отключено — DMA не работает
+  (void)dest;
+  (void)max_samples;
+  return 0;
 }
 
 void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent) {
@@ -312,7 +291,7 @@ void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent) {
 }
 
 uint16_t BOARD_ADC_GetAPRS(void) {
-  return adc_dma_buffer[0]; // CH9 is the only regular channel now
+  return 0; // DMA отключено — APRS не работает
 }
 
 // ---------------------------------------------------------------------------
@@ -340,12 +319,13 @@ void BOARD_DAC_SetValue(uint16_t value) {
 
 void BOARD_Init(void) {
   BOARD_GPIO_Init();
-  UART_Init(); // also enables SYSCFG clock, required before BOARD_ADC_Init
+  UART_Init(); // also enables SYSCFG clock
   LogC(LOG_C_BRIGHT_WHITE, "Init start");
 
-  BOARD_TIM3_Init();
-  BOARD_ADC_Init();
-  BOARD_DAC_Init();
+  // Отключено — ADC/DAC DMA и TIM3/TIM6 создают RF помехи
+  // BOARD_TIM3_Init();
+  // BOARD_ADC_Init();
+  // BOARD_DAC_Init();
 
   LogC(LOG_C_BRIGHT_WHITE, "Flash init");
   PY25Q16_Init();

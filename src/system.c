@@ -536,7 +536,7 @@ void SYS_Main(void) {
       LOOTLIST_update();
     }
 
-    AUDIO_IO_Update();
+    // AUDIO_IO_Update(); // Отключено — DMA шум
     APPS_update();
 
     if (Now() - toastTimer >= 40) {
