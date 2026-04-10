@@ -217,6 +217,17 @@ static void navigateTo(const char *name) {
     formatSize(info.size, sizeStr, sizeof(sizeStr));
     STATUSLINE_SetText("%s - %s", name, sizeStr);
     const char *ext = getFileExtension(name);
+    if (strcmp(ext, "sq") == 0) {
+      // Open squelch editor with this file
+      char fullPath[MAX_PATH_LEN];
+      if (strcmp(gCurrentPath, "/") == 0) {
+        snprintf(fullPath, sizeof(fullPath), "/%s", name);
+      } else {
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", gCurrentPath, name);
+      }
+      APPS_runWithFile(APP_SQVIEWER, fullPath);
+      return;
+    }
     if (strcmp(ext, "bmp") == 0) {
       showingScreenshot = true;
       snprintf(screenshotPath, sizeof(screenshotPath), "%s/%s",

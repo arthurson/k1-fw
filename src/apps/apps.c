@@ -14,6 +14,7 @@
 #include "fc.h"
 #include "files.h"
 #include "messenger.h"
+#include "sqviewer.h"
 // #include "osc.h"
 #include "scaner.h"
 #include "settings.h"
@@ -22,6 +23,7 @@
 #define APPS_STACK_SIZE 8
 
 AppType_t gCurrentApp = APP_NONE;
+char gOpenedFile[64] = {0};
 
 static AppType_t loadedVfoApp = APP_NONE;
 
@@ -83,6 +85,8 @@ const App apps[APPS_COUNT] = {
                      CMDEDIT_key, NULL},
     [APP_ANALYSER] = {"Analyzer", ANALYSER_init, ANALYSER_update, ANALYSER_render,
                      ANALYSER_key, ANALYSER_deinit, true},
+    [APP_SQVIEWER] = {"SQ Editor", SQVIEWER_init, NULL, SQVIEWER_render,
+                     SQVIEWER_key, SQVIEWER_deinit, false},
     /* [APP_OSC] = {"OSC", OSC_init, OSC_update, OSC_render, OSC_key,
        OSC_deinit, true}, */
     [APP_MESSENGER] = {"MESSENGER", MESSENGER_init, MESSENGER_update,
@@ -130,7 +134,21 @@ void APPS_deinit(void) {
 }
 
 RadioState radioState;
+
+static void APPS_runInternal(AppType_t app);
+
 void APPS_run(AppType_t app) {
+  gOpenedFile[0] = '\0';  // Clear opened file for normal app launch
+  APPS_runInternal(app);
+}
+
+void APPS_runWithFile(AppType_t app, const char *filename) {
+  strncpy(gOpenedFile, filename, sizeof(gOpenedFile) - 1);
+  gOpenedFile[sizeof(gOpenedFile) - 1] = '\0';
+  APPS_runInternal(app);
+}
+
+static void APPS_runInternal(AppType_t app) {
   if (appsStack[stackIndex] == app)
     return;
 

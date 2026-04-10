@@ -460,7 +460,8 @@ inline void BK4819_SelectFilterEx(Filter filter) {
 }
 
 inline void BK4819_SelectFilter(uint32_t frequency) {
-  Filter filter = (frequency < 24000000) ? FILTER_VHF : FILTER_UHF;
+  Filter filter =
+      (frequency < SETTINGS_GetFilterBound()) ? FILTER_VHF : FILTER_UHF;
 
   BK4819_SelectFilterEx(filter);
 }
@@ -678,15 +679,16 @@ void BK4819_SetupSquelch(SQL sq, uint8_t delayOpen, uint8_t delayClose) {
   BK4819_WriteRegister(BK4819_REG_78, (sq.ro << 8) | sq.rc);
 }
 
-void BK4819_Squelch(uint8_t sql, uint32_t freq, uint8_t openDelay, uint8_t closeDelay) {
+void BK4819_Squelch(uint8_t sql, uint32_t freq, uint8_t openDelay,
+                    uint8_t closeDelay) {
   SquelchPreset preset = GetSqlPreset(sql, freq);
   SQL sq = {
-    .ro = preset.ro,
-    .rc = preset.rc,
-    .no = preset.no,
-    .nc = preset.nc,
-    .go = preset.go,
-    .gc = preset.gc,
+      .ro = preset.ro,
+      .rc = preset.rc,
+      .no = preset.no,
+      .nc = preset.nc,
+      .go = preset.go,
+      .gc = preset.gc,
   };
   BK4819_SetupSquelch(sq, openDelay, closeDelay);
 }
@@ -1414,7 +1416,7 @@ void BK4819_EnableFrequencyScanEx(FreqScanTime time) {
 }
 
 void BK4819_EnableFrequencyScanEx2(FreqScanTime time, uint16_t hz) {
-  BK4819_WriteRegister(BK4819_REG_32, (time << 14) | (hz << 1) | true);
+  BK4819_WriteRegister(BK4819_REG_32, (time << 14) | (hz << 1) | 1);
 }
 
 void BK4819_DisableFrequencyScan(void) {
@@ -1424,6 +1426,19 @@ void BK4819_DisableFrequencyScan(void) {
 void BK4819_StopScan(void) {
   BK4819_DisableFrequencyScan();
   BK4819_Idle();
+}
+
+void BK4819_SetScanFrequency(uint32_t Frequency) {
+  BK4819_SetFrequency(Frequency);
+  BK4819_WriteRegister(
+      BK4819_REG_51,
+      BK4819_REG_51_DISABLE_CxCSS | BK4819_REG_51_GPIO6_PIN2_NORMAL |
+          BK4819_REG_51_TX_CDCSS_POSITIVE | BK4819_REG_51_MODE_CDCSS |
+          BK4819_REG_51_CDCSS_23_BIT | BK4819_REG_51_1050HZ_NO_DETECTION |
+          BK4819_REG_51_AUTO_CDCSS_BW_DISABLE |
+          BK4819_REG_51_AUTO_CTCSS_BW_DISABLE);
+
+  BK4819_RX_TurnOn();
 }
 
 // ============================================================================
