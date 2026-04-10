@@ -110,37 +110,43 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pin = LL_GPIO_PIN_10;
   LL_GPIO_Init(GPIOB, &InitStruct);
 
-  // --- Output pins (LOW speed для снижения RF помех) ---
+  // --- Output pins: LOW speed (медленное переключение) ---
   InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
   InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
-
-  LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6); // LCD A0
-  LL_GPIO_SetOutputPin(GPIOB, LL_GPIO_PIN_2); // LCD CS
 
   // Keypad cols: PB3–PB6
   InitStruct.Pin =
       LL_GPIO_PIN_6 | LL_GPIO_PIN_5 | LL_GPIO_PIN_4 | LL_GPIO_PIN_3;
   LL_GPIO_Init(GPIOB, &InitStruct);
 
-  // Audio PA: PA8 | LCD A0: PA6 | SPI flash CS: PA3
-  InitStruct.Pin = LL_GPIO_PIN_8 | LL_GPIO_PIN_6 | LL_GPIO_PIN_3;
+  // Audio PA: PA8 | Flashlight: PC13 | Backlight: PF8
+  InitStruct.Pin = LL_GPIO_PIN_8;
   LL_GPIO_Init(GPIOA, &InitStruct);
-
-  // Flashlight: PC13
   InitStruct.Pin = LL_GPIO_PIN_13;
   LL_GPIO_Init(GPIOC, &InitStruct);
-
-  // BK1080 SCK: PF5 | BK1080 SDA: PF6
-  InitStruct.Pin = LL_GPIO_PIN_6 | LL_GPIO_PIN_5;
-  LL_GPIO_Init(GPIOF, &InitStruct);
-
-  // Backlight: PF8
   InitStruct.Pin = LL_GPIO_PIN_8;
   LL_GPIO_Init(GPIOF, &InitStruct);
 
-  // --- BK4829 pins — VERY_HIGH (bit-bang SPI требует быстрой смены) ---
+  // BK1080 I2C: PF5, PF6
+  InitStruct.Pin = LL_GPIO_PIN_6 | LL_GPIO_PIN_5;
+  LL_GPIO_Init(GPIOF, &InitStruct);
+
+  // --- LCD SPI pins — VERY_HIGH (быстрое переключение в SPI) ---
   InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
-  // BK4829 SCK: PB8 | BK4829 SDA: PB9 | BK4819 CS: PF9 | LCD CS: PB2
+
+  LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6); // LCD A0
+  InitStruct.Pin = LL_GPIO_PIN_6;
+  LL_GPIO_Init(GPIOA, &InitStruct);
+
+  LL_GPIO_SetOutputPin(GPIOB, LL_GPIO_PIN_2); // LCD CS
+  InitStruct.Pin = LL_GPIO_PIN_2;
+  LL_GPIO_Init(GPIOB, &InitStruct);
+
+  // SPI flash CS: PA3
+  InitStruct.Pin = LL_GPIO_PIN_3;
+  LL_GPIO_Init(GPIOA, &InitStruct);
+
+  // --- BK4829 pins — VERY_HIGH (bit-bang SPI) ---
   InitStruct.Pin = LL_GPIO_PIN_9 | LL_GPIO_PIN_8;
   LL_GPIO_Init(GPIOB, &InitStruct);
 
