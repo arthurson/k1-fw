@@ -61,6 +61,7 @@ Band CUR_GetRange(Band *p, uint32_t step);
 uint32_t CUR_GetCenterF(uint32_t step);
 void CUR_Reset();
 bool CUR_Size(bool up);
+void CUR_SetPosByFreq(uint32_t f);
 
 extern uint8_t SPECTRUM_Y;
 extern uint8_t SPECTRUM_H;

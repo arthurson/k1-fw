@@ -272,7 +272,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
         {
@@ -282,7 +282,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
         {
@@ -292,7 +292,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
         {
@@ -302,7 +302,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
     };
@@ -1686,7 +1686,7 @@ void RADIO_SaveVFOToStorage(const RadioState *state, uint8_t vfo_index,
   storage->offsetDir = ctx->tx_state.offsetDirection;
 
   storage->mic = ctx->mic;
-  storage->deviation = ctx->dev / 10;  // Convert 0-2550 to 0-255
+  storage->deviation = ctx->dev / 10; // Convert 0-2550 to 0-255
   storage->upconverter = ctx->upconverter;
 }
 
@@ -2067,7 +2067,7 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
     return "?(WIP)";
   case PARAM_STEP:
     snprintf(buf, sizeof(buf), "%d.%02d", StepFrequencyTable[v] / KHZ,
-            StepFrequencyTable[v] % KHZ);
+             StepFrequencyTable[v] % KHZ);
     break;
   case PARAM_FREQUENCY:
   case PARAM_FREQUENCY_FACT:
@@ -2080,7 +2080,8 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
     snprintf(buf, sizeof(buf), "%s", RADIO_NAMES[ctx->radio_type]);
     break;
   case PARAM_TX_OFFSET_DIR:
-    snprintf(buf, sizeof(buf), "%s", TX_OFFSET_NAMES[ctx->tx_state.offsetDirection]);
+    snprintf(buf, sizeof(buf), "%s",
+             TX_OFFSET_NAMES[ctx->tx_state.offsetDirection]);
     break;
   case PARAM_GAIN:
     if (ctx->radio_type == RADIO_BK4819) {

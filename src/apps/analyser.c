@@ -24,6 +24,10 @@ static uint32_t delay = 1200;
 static bool still;
 static bool listen;
 
+// Static cursor: стрелка на фиксированной частоте, сканирование продолжается
+static uint32_t staticCursorFreq; // 0 = не показывать
+static uint16_t staticCursorRssi, staticCursorNoise, staticCursorGlitch;
+
 // sq настройка
 static SQL sq;
 static uint8_t sqStp = 10; // шаг настройки
@@ -37,7 +41,7 @@ typedef enum {
 } SqEditParam;
 
 static SqEditParam sqEditParam = SQ_EDIT_RSSI;
-static uint8_t sqEditLevel;    // Current squelch level being edited (0-10)
+static uint8_t sqEditLevel; // Current squelch level being edited (0-10)
 
 static uint8_t lastSquelchLevel = 0xFF; // Track to detect changes
 
@@ -50,9 +54,12 @@ static uint32_t adjustDelay(int32_t inc) {
   } else {
     step = 5000;
   }
-  int32_t newDelay = (int32_t)delay + (inc > 0 ? (int32_t)step : -(int32_t)step);
-  if (newDelay < 0) return 0;
-  if (newDelay > 90000) return 90000;
+  int32_t newDelay =
+      (int32_t)delay + (inc > 0 ? (int32_t)step : -(int32_t)step);
+  if (newDelay < 0)
+    return 0;
+  if (newDelay > 90000)
+    return 90000;
   return (uint32_t)newDelay;
 }
 
@@ -96,6 +103,11 @@ static void lockToPeak(void) {
   msm->f = f;
   RADIO_SetParam(ctx, PARAM_FREQUENCY, f, false);
   RADIO_ApplySettings(ctx);
+}
+
+// Callback для FINPUT: показываем стрелку на введённой частоте
+static void onStaticCursorFreq(uint32_t fs, uint32_t fe) {
+  staticCursorFreq = fs;
 }
 
 // -------------------------------------------------------------------------
@@ -145,7 +157,8 @@ static bool sqTunerKey(KEY_Code_t key, Key_State_t state) {
     // Save current squelch preset
     {
       SquelchPreset preset = {.ro = sq.ro, .no = sq.no, .go = sq.go};
-      SQ_SavePreset(ctx->frequency >= SETTINGS_GetFilterBound() ? "/uhf.sq" : "/vhf.sq",
+      SQ_SavePreset(ctx->frequency >= SETTINGS_GetFilterBound() ? "/uhf.sq"
+                                                                : "/vhf.sq",
                     sqEditLevel, &preset);
     }
     return true;
@@ -157,6 +170,32 @@ static bool sqTunerKey(KEY_Code_t key, Key_State_t state) {
 
 static bool stillModeKey(KEY_Code_t key, Key_State_t state) {
   switch (key) {
+  case KEY_UP:
+  case KEY_DOWN:
+    // Tune frequency by step
+    {
+      uint32_t step = StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)];
+      int32_t delta = (key == KEY_UP) ? (int32_t)step : -(int32_t)step;
+      if (gSettings.invertButtons)
+        delta = -delta;
+      targetF += delta;
+      msm->f = targetF;
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
+      RADIO_ApplySettings(ctx);
+    }
+    return true;
+  case KEY_4:
+  case KEY_6:
+    // Tune frequency by 4/6 (short and long press)
+    {
+      uint32_t step = StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)];
+      int32_t delta = (key == KEY_4) ? (int32_t)step : -(int32_t)step;
+      targetF += delta;
+      msm->f = targetF;
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
+      RADIO_ApplySettings(ctx);
+    }
+    return true;
   case KEY_SIDE1:
     if (state == KEY_LONG_PRESSED || state == KEY_LONG_PRESSED_CONT) {
       LOOT_BlacklistLast();
@@ -261,6 +300,10 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
 
   if (state == KEY_RELEASED) {
     if (key == KEY_EXIT) {
+      if (staticCursorFreq) {
+        staticCursorFreq = 0;
+        return true;
+      }
       if (listen) {
         listen = false;
         return true;
@@ -296,6 +339,13 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
     }
   }
 
+  // Static cursor: долгий KEY_5 в режиме сканирования → ввод частоты
+  if (!still && key == KEY_5 && state == KEY_LONG_PRESSED) {
+    FINPUT_setup(0, BK4819_F_MAX, UNIT_MHZ, false);
+    FINPUT_Show(onStaticCursorFreq);
+    return true;
+  }
+
   if (state == KEY_RELEASED || state == KEY_LONG_PRESSED ||
       state == KEY_LONG_PRESSED_CONT) {
     if (showSqTuner && sqTunerKey(key, state))
@@ -322,6 +372,11 @@ void ANALYSER_init(void) {
   msm->f = range.start;
 
   targetF = range.start;
+
+  staticCursorFreq = 0;
+  staticCursorRssi = 0;
+  staticCursorNoise = 0;
+  staticCursorGlitch = 0;
 
   // Apply squelch preset for current level
   applySquelchPreset();
@@ -392,6 +447,13 @@ void ANALYSER_update(void) {
   // Check if squelch level changed and reload preset
   applySquelchPreset();
 
+  // Сохраняем R/N/G для стрелки если частота совпала
+  if (staticCursorFreq && msm->f == staticCursorFreq) {
+    staticCursorRssi = msm->rssi;
+    staticCursorNoise = msm->noise;
+    staticCursorGlitch = msm->glitch;
+  }
+
   if (vfo->is_open) {
     updateListening();
   } else {
@@ -431,8 +493,8 @@ static void renderSqTuner(void) {
 
   for (uint8_t i = 0; i < 3; i++) {
     char sel = (i == sqEditParam) ? '<' : ' ';
-    PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * i, POS_R, C_FILL,
-                 "%s %3u%c", labels[i], values[i], sel);
+    PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * i, POS_R, C_FILL, "%s %3u%c",
+                 labels[i], values[i], sel);
   }
   PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 3, POS_R, C_FILL, "s=%u", sqStp);
   PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 4, POS_R, C_FILL, "L=%u", sqEditLevel);
@@ -464,6 +526,14 @@ static void renderStillInfo(void) {
     PrintSmallEx(LCD_XCENTER, 12 + 6 * 3, POS_C, C_FILL, "MONITOR");
 }
 
+static void renderStaticCursorInfo(void) {
+  // Стрелка на фиксированной частоте
+  SP_RenderArrow(staticCursorFreq);
+  FSmall(0, 12 + 6, POS_L, staticCursorFreq);
+  PrintSmallEx(0, 12 + 6 + 6, POS_L, C_FILL, "R%u N%u G%u",
+               staticCursorRssi, staticCursorNoise, staticCursorGlitch);
+}
+
 void ANALYSER_render(void) {
   STATUSLINE_RenderRadioSettings();
 
@@ -476,7 +546,9 @@ void ANALYSER_render(void) {
   PrintSmallEx(LCD_WIDTH - 1, 12, POS_R, C_FILL, "%s",
                RADIO_GetParamValueString(ctx, PARAM_STEP));
 
-  if (still || listen) {
+  if (staticCursorFreq) {
+    renderStaticCursorInfo();
+  } else if (still || listen) {
     if (gMonitorMode) {
       UI_RSSIBar(24);
     }
@@ -494,9 +566,15 @@ void ANALYSER_render(void) {
     // Show squelch threshold line on spectrum
     uint16_t threshold = 0;
     switch (sqEditParam) {
-    case SQ_EDIT_RSSI:  threshold = sq.ro;  break;
-    case SQ_EDIT_NOISE: threshold = sq.no;  break;
-    case SQ_EDIT_GLITCH: threshold = sq.go; break;
+    case SQ_EDIT_RSSI:
+      threshold = sq.ro;
+      break;
+    case SQ_EDIT_NOISE:
+      threshold = sq.no;
+      break;
+    case SQ_EDIT_GLITCH:
+      threshold = sq.go;
+      break;
     }
     VMinMax gv = SP_GetGraphMinMax();
     SP_RenderLine(threshold, gv);

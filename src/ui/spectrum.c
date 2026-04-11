@@ -350,3 +350,7 @@ void CUR_Reset(void) {
   curX = MAX_POINTS / 2;
   curSbWidth = 16;
 }
+
+void CUR_SetPosByFreq(uint32_t f) {
+  curX = SP_F2X(f);
+}
