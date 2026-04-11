@@ -28,14 +28,14 @@ typedef enum {
 #define NOISE_HISTORY_SIZE 32
 
 typedef struct {
-    uint8_t values[NOISE_HISTORY_SIZE];
-    uint8_t idx;
-    uint8_t count;
-    uint16_t sum;
-    uint32_t sum_sq; // сумма квадратов для stddev
-    uint8_t mean;
-    uint8_t stddev;
-    uint8_t k; // коэффициент (2 по умолчанию)
+  uint8_t values[NOISE_HISTORY_SIZE];
+  uint8_t idx;
+  uint8_t count;
+  uint16_t sum;
+  uint32_t sum_sq; // сумма квадратов для stddev
+  uint8_t mean;
+  uint8_t stddev;
+  uint8_t k; // коэффициент (2 по умолчанию)
 } NoiseHistory;
 
 // Контекст сканирования
@@ -73,10 +73,17 @@ typedef struct {
 
   bool precise;
 
-        NoiseHistory noiseHist;
-    uint8_t adaptiveThreshold; // вычисляемый порог
+  NoiseHistory noiseHist;
+  uint8_t adaptiveThreshold; // вычисляемый порог
 
 } ScanContext;
+typedef enum {
+  SCAN_ALGO_ADAPTIVE = 0,
+  SCAN_ALGO_FULLRESET,
+  SCAN_ALGO_STATISTICAL,
+  SCAN_ALGO_CALIBRATED,
+  SCAN_ALGO_COUNT
+} ScanAlgo;
 
 // ============================================================================
 // API
@@ -124,5 +131,9 @@ const char *SCAN_GetStateName(void);
 extern const char *SCAN_MODE_NAMES[];
 extern const char *SCAN_STATE_NAMES[];
 ScanState SCAN_GetState(void);
+
+void SCAN_SetAlgo(ScanAlgo algo);
+ScanAlgo SCAN_GetAlgo(void);
+const char *SCAN_GetAlgoName(void);
 
 #endif

@@ -20,7 +20,7 @@
 
 static Band range;
 static uint32_t targetF;
-static uint32_t delay = 1200;
+static uint32_t delay = 2200;
 static bool still;
 static bool listen;
 
@@ -530,8 +530,8 @@ static void renderStaticCursorInfo(void) {
   // Стрелка на фиксированной частоте
   SP_RenderArrow(staticCursorFreq);
   FSmall(0, 12 + 6, POS_L, staticCursorFreq);
-  PrintSmallEx(0, 12 + 6 + 6, POS_L, C_FILL, "R%u N%u G%u",
-               staticCursorRssi, staticCursorNoise, staticCursorGlitch);
+  PrintSmallEx(0, 12 + 6 + 6, POS_L, C_FILL, "R%u N%u G%u", staticCursorRssi,
+               staticCursorNoise, staticCursorGlitch);
 }
 
 void ANALYSER_render(void) {

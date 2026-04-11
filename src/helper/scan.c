@@ -13,6 +13,32 @@
 #define GARBAGE_FREQ_STEP 650000U
 #define STE_DEBOUNCE_MS 250 // окно подавления STE-хвоста
 
+// --- Алгоритмы сканирования ---
+
+const char *SCAN_ALGO_NAMES[] = {
+    [SCAN_ALGO_ADAPTIVE] = "Adaptive",
+    [SCAN_ALGO_FULLRESET] = "FullReset",
+    [SCAN_ALGO_STATISTICAL] = "Statistical",
+    [SCAN_ALGO_CALIBRATED] = "Calibrated",
+};
+
+static ScanAlgo scanAlgo = SCAN_ALGO_ADAPTIVE;
+
+// --- Параметры статистического алгоритма ---
+#define STAT_PASSES 3       // замеров на канал
+#define STAT_WARMUP_US 2000 // dwell каждого замера
+
+// --- Параметры калибровочного алгоритма ---
+#define CAL_WARMUP_US 8000 // dwell при калибровке
+#define CAL_PASSES 2       // проходов калибровки
+#define MAX_CAL_CHANNELS                                                       \
+  640 // макс. каналов (~400 при 12.5кГц на 8МГц диапазон)
+#define CAL_NOISE_MARGIN 8 // превышение над калибровочным полом
+
+static uint8_t calFloor[MAX_CAL_CHANNELS]; // откалиброванный шум по каналам
+static uint16_t calChannelCount = 0;
+static bool calDone = false;
+
 // --- Адаптивный детектор (EMA) ---
 #define ADAP_MIN_SAMPLES 8 // прогрев
 #define ADAP_EMA_SHIFT 4   // alpha = 1/16
@@ -127,9 +153,12 @@ static bool AdaptiveSq_Check(uint8_t rssi, uint8_t noise, uint8_t glitch) {
   uint8_t floorG = EmaGet(afloor.glitchEma);
 
   // 1) выше адаптивного пола?
-  bool above_floor = (rssi > floorR + FLOOR_MARGIN_RSSI) &&
-                     (noise + FLOOR_MARGIN_NOISE < floorN ||
-                      glitch + FLOOR_MARGIN_GLITCH < floorG);
+  // Базовый порог снижен до 4 (было 6), но подтверждение шума/глитча
+  // обязательно
+  bool rssi_above = (rssi > floorR + FLOOR_MARGIN_RSSI - 2);
+  bool noise_ok = (noise + FLOOR_MARGIN_NOISE < floorN ||
+                   glitch + FLOOR_MARGIN_GLITCH < floorG);
+  bool above_floor = rssi_above && noise_ok;
 
   // 2) резкий фронт относительно предыдущего шага?
   int16_t dR = (int16_t)rssi - afloor.prevRssi;
@@ -200,8 +229,37 @@ static void BeginScanRange(uint32_t start, uint32_t end, uint16_t step) {
   scan.currentF = start;
   scan.stepF = step;
   scan.cmdRangeActive = true;
+  calDone = false; // сброс при смене диапазона
   AdapFloor_SoftReset();
   ChangeState(SCAN_STATE_TUNING);
+}
+
+// Блокирующая калибровка шумовой полки.
+// Вызывается один раз при старте диапазона (algo == CALIBRATED).
+// Усредняет noise по CAL_PASSES проходов → calFloor[].
+static void RunCalibration(void) {
+  if (scan.stepF == 0)
+    return;
+
+  uint32_t n = 0;
+  for (uint32_t f = scan.startF; f <= scan.endF && n < MAX_CAL_CHANNELS;
+       f += scan.stepF, n++)
+    calFloor[n] = 0;
+  calChannelCount = (uint16_t)n;
+
+  for (uint8_t pass = 0; pass < CAL_PASSES; pass++) {
+    uint16_t idx = 0;
+    for (uint32_t f = scan.startF; f <= scan.endF && idx < calChannelCount;
+         f += scan.stepF, idx++) {
+      RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, f, false);
+      RADIO_ApplySettings(ctx);
+      SYSTICK_DelayUs(CAL_WARMUP_US);
+      // усредняем noise (не rssi — ищем именно шумовую полку)
+      calFloor[idx] += BK4819_GetNoise() / CAL_PASSES;
+    }
+  }
+  calDone = true;
 }
 
 static void UpdateBandAndRestart(void) {
@@ -260,6 +318,57 @@ static void HandleStateIdle(void) {
     ApplyCommand(cmd);
 }
 
+// Измерение на текущей частоте, заполняет scan.measurement
+static void TakeMeasurement(bool precise) {
+  RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, precise, false);
+  RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
+  RADIO_ApplySettings(ctx);
+  SYSTICK_DelayUs(scan.warmupUs);
+  scan.measurement.rssi = RADIO_GetRSSI(ctx);
+  scan.measurement.noise = BK4819_GetNoise();
+  scan.measurement.glitch = BK4819_GetGlitch();
+  scan.measurement.f = scan.currentF;
+}
+
+// ALGO_STATISTICAL: N замеров, берём максимум rssi
+// Случайные glitch-пики усредняются, стабильный сигнал — нет
+static void TakeMeasurementStatistical(bool precise) {
+  uint8_t maxRssi = 0, minNoise = 255, minGlitch = 255;
+  RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, precise, false);
+  RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
+  RADIO_ApplySettings(ctx);
+
+  for (uint8_t i = 0; i < STAT_PASSES; i++) {
+    SYSTICK_DelayUs(STAT_WARMUP_US);
+    uint8_t r = RADIO_GetRSSI(ctx);
+    uint8_t n = BK4819_GetNoise();
+    uint8_t g = BK4819_GetGlitch();
+    if (r > maxRssi)
+      maxRssi = r;
+    if (n < minNoise)
+      minNoise = n;
+    if (g < minGlitch)
+      minGlitch = g;
+  }
+  scan.measurement.rssi = maxRssi;
+  scan.measurement.noise = minNoise;
+  scan.measurement.glitch = minGlitch;
+  scan.measurement.f = scan.currentF;
+}
+
+// Детектор для ALGO_CALIBRATED: сигнал = rssi сильно выше калибровочного шума
+static bool CalibratedSq_Check(uint8_t rssi, uint8_t noise, uint8_t glitch) {
+  if (glitch > 200 || scan.stepF == 0)
+    return false;
+  uint16_t idx = (uint16_t)((scan.currentF - scan.startF) / scan.stepF);
+  if (idx >= calChannelCount)
+    return false;
+  uint8_t floor = calFloor[idx];
+  // сигнал: rssi хорошо выше полки И noise упал ниже полки
+  return (rssi > floor + CAL_NOISE_MARGIN) &&
+         (noise + (CAL_NOISE_MARGIN / 2) < floor || glitch < 50);
+}
+
 static void HandleStateTuning(void) {
   if (scan.stepF == 0) {
     if (IsSkippable(scan.currentF)) {
@@ -276,30 +385,47 @@ static void HandleStateTuning(void) {
     return;
   }
 
+  // CALIBRATED: калибровка при первом проходе
+  if (scanAlgo == SCAN_ALGO_CALIBRATED && !calDone)
+    RunCalibration();
+
   RADIO_MuteAudioNow(gRadioState);
 
-  RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
-  RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
-  RADIO_ApplySettings(ctx);
+  bool precise =
+      (scanAlgo == SCAN_ALGO_FULLRESET || scanAlgo == SCAN_ALGO_CALIBRATED);
 
-  SYSTICK_DelayUs(scan.warmupUs);
-
-  scan.measurement.rssi = RADIO_GetRSSI(ctx);
-  scan.measurement.noise = BK4819_GetNoise();
-  scan.measurement.glitch = BK4819_GetGlitch();
-  scan.measurement.f = scan.currentF;
+  if (scanAlgo == SCAN_ALGO_STATISTICAL)
+    TakeMeasurementStatistical(precise);
+  else
+    TakeMeasurement(precise);
 
   scan.scanCycles++;
   UpdateCPS();
 
+  SP_AddPoint(&scan.measurement);
   if (scan.mode == SCAN_MODE_ANALYSER) {
-    SP_AddPoint(&scan.measurement);
     scan.currentF += scan.stepF;
     return;
   }
 
-  if (AdaptiveSq_Check(scan.measurement.rssi, scan.measurement.noise,
-                       scan.measurement.glitch)) {
+  bool isCandidate;
+  switch (scanAlgo) {
+  case SCAN_ALGO_CALIBRATED:
+    isCandidate = CalibratedSq_Check(
+        scan.measurement.rssi, scan.measurement.noise, scan.measurement.glitch);
+    break;
+  case SCAN_ALGO_STATISTICAL:
+    // статистический: тот же EMA, но данные уже усреднены
+    isCandidate = AdaptiveSq_Check(
+        scan.measurement.rssi, scan.measurement.noise, scan.measurement.glitch);
+    break;
+  default: // ADAPTIVE, FULLRESET
+    isCandidate = AdaptiveSq_Check(
+        scan.measurement.rssi, scan.measurement.noise, scan.measurement.glitch);
+    break;
+  }
+
+  if (isCandidate) {
     ChangeState(SCAN_STATE_CHECKING);
   } else {
     scan.measurement.open = false;
@@ -319,9 +445,18 @@ static void HandleStateChecking(void) {
   }
 
   if (!vcoResetDone) {
-    uint16_t reg = BK4819_ReadRegister(BK4819_REG_30);
-    BK4819_WriteRegister(BK4819_REG_30, 0x200);
-    BK4819_WriteRegister(BK4819_REG_30, reg);
+    if (scanAlgo == SCAN_ALGO_FULLRESET || scanAlgo == SCAN_ALGO_CALIBRATED) {
+      // полный сброс через precise: частота переприменяется с полной
+      // инициализацией PLL
+      RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, true, false);
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
+      RADIO_ApplySettings(ctx);
+    } else {
+      // VCO-only reset
+      RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
+      RADIO_ApplySettings(ctx);
+    }
 
     vcoResetAt = Now(); // отсчёт SQL_DELAY с этого момента
     vcoResetDone = true;
@@ -363,10 +498,10 @@ static void HandleStateChecking(void) {
       SYSTICK_DelayUs(scan.warmupUs);
     }
 
-    // EMA обновляем только если RSSI у пола — иначе отравим порог реальным
-    // сигналом
+    // EMA обновляем только если rssi строго ниже порога детекции —
+    // иначе сигнал-кандидат поднимает пол вверх
     uint8_t floorR = EmaGet(afloor.rssiEma);
-    if (scan.measurement.rssi <= floorR + FLOOR_MARGIN_RSSI + 2)
+    if (scan.measurement.rssi < floorR + FLOOR_MARGIN_RSSI)
       AdapFloor_UpdateEma(scan.measurement.rssi, scan.measurement.noise,
                           scan.measurement.glitch);
 
@@ -617,3 +752,17 @@ void SCAN_HandleInterrupt(uint16_t int_bits) {
 bool SCAN_IsSqOpen(void) { return BK4819_IsSquelchOpen(); }
 const char *SCAN_GetStateName(void) { return SCAN_STATE_NAMES[scan.state]; }
 ScanState SCAN_GetState(void) { return scan.state; }
+
+// --- Выбор алгоритма сканирования ---
+
+void SCAN_SetAlgo(ScanAlgo algo) {
+  if (algo >= SCAN_ALGO_COUNT)
+    return;
+  scanAlgo = algo;
+  calDone = false; // при смене алго сбрасываем калибровку
+  AdapFloor_Reset();
+  Log("[SCAN] algo: %s", SCAN_ALGO_NAMES[algo]);
+}
+
+ScanAlgo SCAN_GetAlgo(void) { return scanAlgo; }
+const char *SCAN_GetAlgoName(void) { return SCAN_ALGO_NAMES[scanAlgo]; }
