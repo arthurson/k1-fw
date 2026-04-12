@@ -1537,9 +1537,23 @@ void BK4819_Init(void) {
   BK4819_WriteRegister(0x1C, 0x07C0);
   BK4819_WriteRegister(0x1D, 0xE555);
   BK4819_WriteRegister(0x1E, 0x4C58);
-  BK4819_WriteRegister(0x1F, 0xC65A); // PLL CP 0:3
 
-  BK4819_WriteRegister(BK4819_REG_3E, 0x94C6);
+  // Crystal & PLL — reduce crystal harmonic spurs (26 MHz harmonics)
+  // REG_1A: vReg=5 (15:12), iBit=8 (11:8)
+  BK4819_WriteRegister(0x1A, 0x5800);
+  // REG_1F: PLL charge pump = 8 (3:0), was 10 → less RF interference
+  BK4819_WriteRegister(0x1F, 0xC658);
+
+  // REG_24: DTMF/SelCall decoder DISABLED at boot (eliminates digital spurs)
+  // Only enabled temporarily during DTMF transmission
+  BK4819_WriteRegister(BK4819_REG_24, 0x0000);
+
+  // IF filter: 0x01c0/0x0000 = Zero-IF mode (reduces 26MHz harmonic feedthrough)
+  BK4819_WriteRegister(0x1C, 0x01C0);
+  BK4819_WriteRegister(0x1D, 0x0000);
+
+  // VCO tuning: 400M–600M for GF process (reduces crystal harmonics)
+  BK4819_WriteRegister(BK4819_REG_3E, 0xA037);
 
   BK4819_WriteRegister(0x73, 0x4691); // AFC DIS
   BK4819_WriteRegister(0x77, 0x88EF);
