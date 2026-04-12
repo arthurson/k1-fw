@@ -1488,6 +1488,9 @@ void BK4819_Enable_AfDac_DiscMode_TxDsp(void) {
 // ============================================================================
 static bool isInitialized = false;
 
+// Forward declaration (defined after Init)
+static void BK4819_ApplySpurShift(void);
+
 void BK4819_Init(void) {
   if (isInitialized) {
     return;
@@ -1502,13 +1505,16 @@ void BK4819_Init(void) {
   BK4819_WriteRegister(BK4819_REG_00, 0x8000);
   BK4819_WriteRegister(BK4819_REG_00, 0x0000);
 
-  BK4819_WriteRegister(BK4819_REG_37, 0x9D1F & ~(1 << 10)); // LDO, XTAL EN
+  // REG_37: LDO+XTAL EN, DSP voltage=0 (min), reduce spur feedthrough
+  BK4819_WriteRegister(BK4819_REG_37, 0x8D1F & ~(1 << 10));
   BK4819_WriteRegister(BK4819_REG_36, 0x0022);              // PA
 
   BK4819_WriteRegister(BK4819_REG_10, 0x0318);
   BK4819_WriteRegister(BK4819_REG_11, 0x033A);
   BK4819_WriteRegister(BK4819_REG_12, 0x03DB);
-
+  BK4819_WriteRegister(BK4819_REG_13, 0x03DF); // AGC gain 3 (55nm)
+  BK4819_WriteRegister(BK4819_REG_14, 0x0210); // AGC gain 4 (55nm)
+  BK4819_WriteRegister(BK4819_REG_49, 0x2AB2); // AGC max threshold
   BK4819_WriteRegister(BK4819_REG_7B, 0x73DC);
 
   // BK4819_WriteRegister(BK4819_REG_48, 0x33A8);
@@ -1541,25 +1547,24 @@ void BK4819_Init(void) {
   // Crystal & PLL — reduce crystal harmonic spurs (26 MHz harmonics)
   // REG_1A: vReg=5 (15:12), iBit=8 (11:8)
   BK4819_WriteRegister(0x1A, 0x5800);
-  // REG_1F: PLL charge pump = 8 (3:0), was 10 → less RF interference
-  BK4819_WriteRegister(0x1F, 0xC658);
 
   // REG_24: DTMF/SelCall decoder DISABLED at boot (eliminates digital spurs)
   // Only enabled temporarily during DTMF transmission
   BK4819_WriteRegister(BK4819_REG_24, 0x0000);
 
-  // IF filter: 0x01c0/0x0000 = Zero-IF mode (reduces 26MHz harmonic feedthrough)
-  BK4819_WriteRegister(0x1C, 0x01C0);
-  BK4819_WriteRegister(0x1D, 0x0000);
+  // IF filter: BPF (reference default — less DC offset / flicker noise)
+  BK4819_WriteRegister(0x1C, 0x07C0);
+  BK4819_WriteRegister(0x1D, 0xE555);
 
-  // VCO tuning: 400M–600M for GF process (reduces crystal harmonics)
-  BK4819_WriteRegister(BK4819_REG_3E, 0xA037);
+  // VCO & PLL — spur reduction (mode 3 = A278/CP4)
+  BK4819_ApplySpurShift();
 
   BK4819_WriteRegister(0x73, 0x4691); // AFC DIS
   BK4819_WriteRegister(0x77, 0x88EF);
 
   BK4819_WriteRegister(BK4819_REG_7D, 0xE920); // mic sens
   BK4819_WriteRegister(BK4819_REG_19, 0x104E); // MIC AGC on
+  BK4819_WriteRegister(0x27, 0x1430); // Analog filter (55nm)
   BK4819_WriteRegister(BK4819_REG_28, 0x0B40); // RX noise gate
   BK4819_WriteRegister(BK4819_REG_29, 0xAA00); // TX noise gate
 
@@ -1597,3 +1602,27 @@ void BK4819_Init(void) {
 
   isInitialized = true;
 }
+
+// ============================================================================
+// Spur shift — moves crystal harmonics (26 MHz × N) to different frequencies
+// ============================================================================
+
+static uint8_t gSpurShift = 3;
+
+// Different VCO band + PLL CP combinations shift spur positions
+static const uint16_t spurReg3E[] = {0xA037, 0x9896, 0x94C6, 0xA278};
+static const uint16_t spurReg1F[] = {0xC658, 0xC656, 0xC65A, 0xC654};
+
+static void BK4819_ApplySpurShift(void) {
+  BK4819_WriteRegister(BK4819_REG_3E, spurReg3E[gSpurShift]);
+  BK4819_WriteRegister(0x1F, spurReg1F[gSpurShift]);
+}
+
+void BK4819_SetSpurShift(uint8_t mode) {
+  if (mode >= ARRAY_SIZE(spurReg3E)) mode = 0;
+  gSpurShift = mode;
+  BK4819_WriteRegister(BK4819_REG_3E, spurReg3E[mode]);
+  BK4819_WriteRegister(0x1F, spurReg1F[mode]);
+}
+
+uint8_t BK4819_GetSpurShift(void) { return gSpurShift; }

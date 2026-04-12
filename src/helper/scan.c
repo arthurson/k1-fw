@@ -183,8 +183,8 @@ static bool AdaptiveSq_Check(uint8_t rssi, uint8_t noise, uint8_t glitch) {
 }
 
 static bool IsSkippable(uint32_t f) {
-  if (gSettings.skipGarbageFrequencies && (f % GARBAGE_FREQ_STEP == 0))
-    return true;
+  /* if (gSettings.skipGarbageFrequencies && (f % GARBAGE_FREQ_STEP == 0))
+    return true; */
   Loot *l = LOOT_Get(f);
   return l && (l->blacklist || l->whitelist);
 }

@@ -252,10 +252,42 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
   uint32_t step = StepFrequencyTable[RADIO_GetParam(ctx, PARAM_STEP)];
   switch (key) {
   case KEY_UP:
-  case KEY_DOWN:
-    CUR_Move((key == KEY_UP) ^ gSettings.invertButtons);
+  case KEY_DOWN: {
+    bool moved = CUR_Move((key == KEY_UP) ^ gSettings.invertButtons);
     cursorRangeTimeout = Now() + 2000;
+
+    // If cursor hit the edge — shift the range and scroll spectrum
+    if (!moved) {
+      bool up = (key == KEY_UP) ^ gSettings.invertButtons;
+      if (up) {
+        // Hit right edge → shift range right, scroll spectrum left
+        range.start += step;
+        range.end += step;
+        SP_ShiftGraph(-1); // scroll left, free space on right
+      } else {
+        // Hit left edge → shift range left, scroll spectrum right
+        range.start -= step;
+        range.end -= step;
+        if (range.start > step) {
+          SP_ShiftGraph(1); // scroll right, free space on left
+        } else {
+          range.start = 0;
+          range.end = range.start + StepFrequencyTable[range.step] * LCD_WIDTH;
+        }
+      }
+      // Clamp to valid range
+      if (range.end > BK4819_F_MAX) {
+        range.end = BK4819_F_MAX;
+        range.start = range.end - StepFrequencyTable[range.step] * LCD_WIDTH;
+      }
+      // Update band stack and reset sweep (preserve history)
+      BANDS_RangePeek()->start = range.start;
+      BANDS_RangePeek()->end = range.end;
+      SP_Begin();
+      gRedrawScreen = true;
+    }
     return true;
+  }
 
   case KEY_1:
   case KEY_7:
@@ -410,6 +442,8 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
 void ANALYSER_init(void) {
   SPECTRUM_Y = 8;
   SPECTRUM_H = 44;
+
+  gMonitorMode = false;
 
   // Load persisted settings
   analyserSettingsLoad();
