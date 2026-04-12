@@ -502,16 +502,16 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
     BK4819_SetAFCSpeed(ctx->afc_speed);
     return true;
   case PARAM_AF_RX_300:
-    BK4819_SetAFResponse(false, false, ctx->af_rx_300);
+    BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
     return true;
   case PARAM_AF_RX_3K:
-    BK4819_SetAFResponse(false, true, ctx->af_rx_3k);
+    BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
     return true;
   case PARAM_AF_TX_300:
-    BK4819_SetAFResponse(true, false, ctx->af_tx_300);
+    BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
     return true;
   case PARAM_AF_TX_3K:
-    BK4819_SetAFResponse(true, true, ctx->af_tx_3k);
+    BK4819_SetAFResponse(true, true, gSettings.af_tx_3k - 4);
     return true;
   case PARAM_XTAL:
     BK4819_XtalSet(ctx->xtal);
@@ -1024,16 +1024,24 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     ctx->afc_speed = value;
     break;
   case PARAM_AF_RX_300:
-    ctx->af_rx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_rx_300 = value;
+    BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
+    SETTINGS_MarkDirty(SETTING_AF_RX_300);
     break;
   case PARAM_AF_RX_3K:
-    ctx->af_rx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_rx_3k = value;
+    BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
+    SETTINGS_MarkDirty(SETTING_AF_RX_3K);
     break;
   case PARAM_AF_TX_300:
-    ctx->af_tx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_tx_300 = value;
+    BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
+    SETTINGS_MarkDirty(SETTING_AF_TX_300);
     break;
   case PARAM_AF_TX_3K:
-    ctx->af_tx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_tx_3k = value;
+    BK4819_SetAFResponse(true, true, gSettings.af_tx_3k - 4);
+    SETTINGS_MarkDirty(SETTING_AF_TX_3K);
     break;
   case PARAM_DEV:
     ctx->dev = value;
@@ -1159,13 +1167,13 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
   case PARAM_AFC_SPD:
     return ctx->afc_speed;
   case PARAM_AF_RX_300:
-    return ctx->af_rx_300 + 4; // -4..+4 -> 0-8
+    return gSettings.af_rx_300;
   case PARAM_AF_RX_3K:
-    return ctx->af_rx_3k + 4; // -4..+4 -> 0-8
+    return gSettings.af_rx_3k;
   case PARAM_AF_TX_300:
-    return ctx->af_tx_300 + 4; // -4..+4 -> 0-8
+    return gSettings.af_tx_300;
   case PARAM_AF_TX_3K:
-    return ctx->af_tx_3k + 4; // -4..+4 -> 0-8
+    return gSettings.af_tx_3k;
   case PARAM_XTAL:
     return ctx->xtal;
   case PARAM_SCRAMBLER:

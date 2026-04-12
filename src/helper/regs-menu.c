@@ -39,10 +39,6 @@ static const ParamType paramsBK4819[] = {
     PARAM_STEP,          //
     PARAM_AFC,           //
     PARAM_AFC_SPD,       //
-    PARAM_AF_RX_300,     //
-    PARAM_AF_RX_3K,      //
-    PARAM_AF_TX_300,     //
-    PARAM_AF_TX_3K,      //
     PARAM_DEV,           //
     PARAM_XTAL,          //
     PARAM_SCRAMBLER,     //

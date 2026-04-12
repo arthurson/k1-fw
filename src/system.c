@@ -114,11 +114,29 @@ static void reset(void) {
 }
 
 static void loadSettingsOrReset(void) {
+  bool recreate = false;
   if (!lfs_file_exists("Settings.set")) {
+    recreate = true;
+  } else {
+    // Проверка размера файла — если структура расширилась, пересоздаём
+    struct lfs_info info;
+    if (lfs_stat(&gLfs, "Settings.set", &info) == 0 &&
+        info.size != sizeof(Settings)) {
+      recreate = true;
+    }
+  }
+
+  if (recreate) {
     STORAGE_INIT("Settings.set", Settings, 1);
     STORAGE_SAVE("Settings.set", 0, &gSettings);
   }
   STORAGE_LOAD("Settings.set", 0, &gSettings);
+
+  // Apply global EQ settings to BK4819
+  BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
+  BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
+  BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
+  BK4819_SetAFResponse(true, true, gSettings.af_tx_3k - 4);
 
   if (!lfs_file_exists("Bands.bnd")) {
     STORAGE_INIT("Bands.bnd", Band, MAX_BANDS);
