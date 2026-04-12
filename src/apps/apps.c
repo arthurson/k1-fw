@@ -16,7 +16,6 @@
 #include "files.h"
 #include "messenger.h"
 #include "sqviewer.h"
-// #include "osc.h"
 #include "scaner.h"
 #include "settings.h"
 #include "vfo1.h"
@@ -63,7 +62,6 @@ const AppType_t appsAvailableToRun[RUN_APPS_COUNT] = {
     APP_ANALYSER, //
     APP_CMDSCAN, //
     APP_FC,      //
-    // APP_OSC,       //
     APP_MESSENGER, //
     APP_FILES,     //
     APP_ABOUT,     //
@@ -90,8 +88,6 @@ const App apps[APPS_COUNT] = {
                      SQVIEWER_key, SQVIEWER_deinit, false},
     [APP_CHLIST] = {"CH Editor", CHLIST_init, NULL, CHLIST_render,
                      CHLIST_key, CHLIST_deinit, false},
-    /* [APP_OSC] = {"OSC", OSC_init, OSC_update, OSC_render, OSC_key,
-       OSC_deinit, true}, */
     [APP_MESSENGER] = {"MESSENGER", MESSENGER_init, MESSENGER_update,
                        MESSENGER_render, MESSENGER_key, MESSENGER_deinit, true},
     [APP_FILES] = {"Files", FILES_init, NULL, FILES_render, FILES_key, NULL},

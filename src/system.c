@@ -16,7 +16,6 @@
 #include "external/CMSIS/Device/PY32F071/Include/py32f071xB.h"
 #include "external/littlefs/lfs.h"
 #include "external/printf/printf.h"
-#include "helper/audio_io.h"
 #include "helper/audio_rec.h"
 #include "helper/bands.h"
 #include "helper/fsk2.h"
@@ -535,11 +534,13 @@ void SYS_Main(void) {
   LogC(LOG_C_BRIGHT_WHITE, "System initialized");
 
   for (;;) {
+    uint32_t now = Now();  // Read once per loop — fewer TIM2 accesses
+
     SETTINGS_UpdateSave();
     checkInt();
     SCAN_Check();
 
-    if (dtmfIdx > 0 && Now() - lastDtmf > 400) {
+    if (dtmfIdx > 0 && now - lastDtmf > 400) {
       TOAST_Push("DTMF: %s", dtmfBuf);
       dtmfIdx = 0;
     }
@@ -554,29 +555,27 @@ void SYS_Main(void) {
       LOOTLIST_update();
     }
 
-    // AUDIO_IO_Update(); // Отключено — DMA шум
     APPS_update();
 
-    if (Now() - toastTimer >= 40) {
+    if (now - toastTimer >= 40) {
       TOAST_Update();
-      toastTimer = Now();
+      toastTimer = now;
     }
-    if (Now() - appsKeyboardTimer >= 5) {
-      // 5 мс вместо 1 мс — снижаем RF помехи от сканирования клавиатуры
+    if (now - appsKeyboardTimer >= 5) {
       keyboard_tick_1ms();
-      appsKeyboardTimer = Now();
+      appsKeyboardTimer = now;
     }
-    if (Now() - backlightTimer >= 500) {
+    if (now - backlightTimer >= 500) {
       BACKLIGHT_UpdateTimer();
-      backlightTimer = Now();
+      backlightTimer = now;
     }
-    if (Now() - secondTimer >= 1000) {
+    if (now - secondTimer >= 1000) {
       BATTERY_UpdateBatteryInfo();
       STATUSLINE_update();
-      secondTimer = Now();
+      secondTimer = now;
     }
 
-    if (Now() - gLastRender >= 500) {
+    if (now - gLastRender >= 500) {
       gRedrawScreen = true;
     }
 

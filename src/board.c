@@ -10,77 +10,12 @@
 #include "driver/uart.h"
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_adc.h"
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_bus.h"
-#include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_dac.h"
-#include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_dma.h"
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_gpio.h"
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_rcc.h"
 #include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_system.h"
-#include "external/PY32F071_HAL_Driver/Inc/py32f071_ll_tim.h"
 #include "helper/measurements.h"
 #include "ui/graphics.h"
 #include <stdint.h>
-
-// DMA buffer: CH9 only (APRS audio) — отключено, RF помехи
-// volatile uint16_t adc_dma_buffer[2 * APRS_BUFFER_SIZE]
-//     __attribute__((aligned(4)));
-static volatile uint16_t adc_dma_buffer_dummy[1];
-
-volatile bool aprs_ready1 = false;
-volatile bool aprs_ready2 = false;
-
-// ---------------------------------------------------------------------------
-// DMA
-// ---------------------------------------------------------------------------
-
-void BOARD_DMA_Init(void) {
-  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA1);
-
-  LL_AHB1_GRP1_ForceReset(LL_AHB1_GRP1_PERIPH_DMA1);
-  LL_AHB1_GRP1_ReleaseReset(LL_AHB1_GRP1_PERIPH_DMA1);
-
-  LL_DMA_DeInit(DMA1, LL_DMA_CHANNEL_1);
-
-  LL_DMA_InitTypeDef DMA_InitStruct;
-  LL_DMA_StructInit(&DMA_InitStruct);
-
-  DMA_InitStruct.Direction = LL_DMA_DIRECTION_PERIPH_TO_MEMORY;
-  DMA_InitStruct.PeriphOrM2MSrcAddress = (uint32_t)&ADC1->DR;
-  DMA_InitStruct.MemoryOrM2MDstAddress = (uint32_t)adc_dma_buffer_dummy;
-  DMA_InitStruct.PeriphOrM2MSrcDataSize = LL_DMA_PDATAALIGN_HALFWORD;
-  DMA_InitStruct.MemoryOrM2MDstDataSize = LL_DMA_MDATAALIGN_HALFWORD;
-  DMA_InitStruct.NbData = 1;
-  DMA_InitStruct.PeriphOrM2MSrcIncMode = LL_DMA_PERIPH_NOINCREMENT;
-  DMA_InitStruct.MemoryOrM2MDstIncMode = LL_DMA_MEMORY_INCREMENT;
-  DMA_InitStruct.Mode = LL_DMA_MODE_CIRCULAR;
-  DMA_InitStruct.Priority = LL_DMA_PRIORITY_HIGH;
-
-  LL_DMA_Init(DMA1, LL_DMA_CHANNEL_1, &DMA_InitStruct);
-
-  LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_1);
-  LL_DMA_EnableIT_HT(DMA1, LL_DMA_CHANNEL_1);
-  LL_DMA_EnableIT_TE(DMA1, LL_DMA_CHANNEL_1);
-  NVIC_EnableIRQ(DMA1_Channel1_IRQn);
-}
-
-void DMA1_Channel1_IRQHandler(void) {
-  if (LL_DMA_IsActiveFlag_HT1(DMA1)) {
-    LL_DMA_ClearFlag_HT1(DMA1);
-    // half-A (indices 0..APRS_BUFFER_SIZE-1) стабильна — DMA пишет в half-B
-    aprs_ready1 = true;
-  }
-
-  if (LL_DMA_IsActiveFlag_TC1(DMA1)) {
-    LL_DMA_ClearFlag_TC1(DMA1);
-    // half-B (indices APRS_BUFFER_SIZE..2*APRS_BUFFER_SIZE-1) стабильна — DMA
-    // пишет в half-A
-    aprs_ready2 = true;
-  }
-
-  if (LL_DMA_IsActiveFlag_TE1(DMA1)) {
-    LL_DMA_ClearFlag_TE1(DMA1);
-    LogC(LOG_C_RED, "DMA Transfer Error!");
-  }
-}
 
 // ---------------------------------------------------------------------------
 // GPIO
@@ -96,7 +31,7 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pull = LL_GPIO_PULL_UP;
 
   // --- Input pins ---
-  InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;  // Для входов скорость не важна
+  InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
   InitStruct.Mode = LL_GPIO_MODE_INPUT;
 
   // Keypad rows: PB12–PB15
@@ -108,7 +43,7 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pin = LL_GPIO_PIN_10;
   LL_GPIO_Init(GPIOB, &InitStruct);
 
-  // --- Output pins: LOW speed (медленное переключение) ---
+  // --- Output pins: LOW speed ---
   InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
   InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
 
@@ -129,7 +64,7 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pin = LL_GPIO_PIN_6 | LL_GPIO_PIN_5;
   LL_GPIO_Init(GPIOF, &InitStruct);
 
-  // --- LCD SPI pins — VERY_HIGH (быстрое переключение в SPI) ---
+  // --- LCD SPI pins — VERY_HIGH ---
   InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
 
   LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6); // LCD A0
@@ -144,7 +79,7 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pin = LL_GPIO_PIN_3;
   LL_GPIO_Init(GPIOA, &InitStruct);
 
-  // --- BK4829 pins — VERY_HIGH (bit-bang SPI) ---
+  // --- BK4829 pins — VERY_HIGH ---
   InitStruct.Pin = LL_GPIO_PIN_9 | LL_GPIO_PIN_8;
   LL_GPIO_Init(GPIOB, &InitStruct);
 
@@ -156,17 +91,35 @@ void BOARD_GPIO_Init(void) {
   InitStruct.Pull = LL_GPIO_PULL_NO;
   InitStruct.Pin = LL_GPIO_PIN_0 | LL_GPIO_PIN_1;
   LL_GPIO_Init(GPIOB, &InitStruct);
-}
 
-void BOARD_TIM3_Init(void) {
-  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_TIM3);
+  // --- Unused pins → Analog (no pull) — minimal leakage ---
+  InitStruct.Mode = LL_GPIO_MODE_ANALOG;
+  InitStruct.Pull = LL_GPIO_PULL_NO;
+  InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
 
-  LL_TIM_SetPrescaler(TIM3, 0);
-  LL_TIM_SetAutoReload(TIM3, 4999); // 48MHz / 5000 = 9600 Hz точно
+  // GPIOA: PA0, PA1, PA2, PA4, PA5, PA7, PA11, PA12, PA15
+  InitStruct.Pin = LL_GPIO_PIN_0 | LL_GPIO_PIN_1 | LL_GPIO_PIN_2 |
+                   LL_GPIO_PIN_4 | LL_GPIO_PIN_5 | LL_GPIO_PIN_7 |
+                   LL_GPIO_PIN_11 | LL_GPIO_PIN_12 | LL_GPIO_PIN_15;
+  LL_GPIO_Init(GPIOA, &InitStruct);
 
-  LL_TIM_SetCounterMode(TIM3, LL_TIM_COUNTERMODE_UP);
-  LL_TIM_SetTriggerOutput(TIM3, LL_TIM_TRGO_UPDATE);
-  LL_TIM_DisableMasterSlaveMode(TIM3);
+  // GPIOB: PB7, PB11
+  InitStruct.Pin = LL_GPIO_PIN_7 | LL_GPIO_PIN_11;
+  LL_GPIO_Init(GPIOB, &InitStruct);
+
+  // GPIOC: all except PC13
+  InitStruct.Pin = LL_GPIO_PIN_0 | LL_GPIO_PIN_1 | LL_GPIO_PIN_2 |
+                   LL_GPIO_PIN_3 | LL_GPIO_PIN_4 | LL_GPIO_PIN_5 |
+                   LL_GPIO_PIN_6 | LL_GPIO_PIN_7 | LL_GPIO_PIN_8 |
+                   LL_GPIO_PIN_9 | LL_GPIO_PIN_10 | LL_GPIO_PIN_11 |
+                   LL_GPIO_PIN_12 | LL_GPIO_PIN_14 | LL_GPIO_PIN_15;
+  LL_GPIO_Init(GPIOC, &InitStruct);
+
+  // GPIOF: PF0-PF4, PF7
+  InitStruct.Pin = LL_GPIO_PIN_0 | LL_GPIO_PIN_1 | LL_GPIO_PIN_2 |
+                   LL_GPIO_PIN_3 | LL_GPIO_PIN_4 | LL_GPIO_PIN_7;
+  LL_GPIO_Init(GPIOF, &InitStruct);
 }
 
 // ---------------------------------------------------------------------------
@@ -199,13 +152,6 @@ void BOARD_ADC_Init(void) {
   LL_ADC_Enable(ADC1);
 }
 
-void BOARD_ADC_StartAPRS_DMA(void) { (void)0; }
-void BOARD_ADC_StopAPRS_DMA(void) { (void)0; }
-uint32_t BOARD_ADC_GetAvailableAPRS_DMA(void) { return 0; }
-uint32_t BOARD_ADC_ReadAPRS_DMA(uint16_t *dest, uint32_t max_samples) {
-  (void)dest; (void)max_samples; return 0;
-}
-
 void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent) {
   LL_ADC_REG_StartConversionSWStart(ADC1);
   while (!LL_ADC_IsActiveFlag_EOS(ADC1))
@@ -214,27 +160,6 @@ void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent) {
 
   *pVoltage = LL_ADC_REG_ReadConversionData12(ADC1);
   *pCurrent = 0;
-}
-
-uint16_t BOARD_ADC_GetAPRS(void) { return 0; }
-
-// ---------------------------------------------------------------------------
-// DAC
-// ---------------------------------------------------------------------------
-
-void BOARD_DAC_Init(void) {
-  LL_GPIO_SetPinMode(GPIOA, LL_GPIO_PIN_4, LL_GPIO_MODE_ANALOG);
-  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_DAC1);
-  LL_DAC_SetTriggerSource(DAC1, LL_DAC_CHANNEL_1, LL_DAC_TRIG_SOFTWARE);
-  LL_DAC_SetOutputBuffer(DAC1, LL_DAC_CHANNEL_1, LL_DAC_OUTPUT_BUFFER_ENABLE);
-  LL_DAC_Enable(DAC1, LL_DAC_CHANNEL_1);
-}
-
-void BOARD_DAC_SetValue(uint16_t value) {
-  if (value > 4095)
-    value = 4095;
-  LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, value);
-  LL_DAC_TrigSWConversion(DAC1, LL_DAC_CHANNEL_1);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +184,11 @@ void BOARD_Init(void) {
   ST7565_Init();
   LogC(LOG_C_BRIGHT_WHITE, "Backlight init");
   BACKLIGHT_InitHardware();
+
+  // Disable clocks for unused peripherals — power saving
+  LL_APB1_GRP1_DisableClock(LL_APB1_GRP1_PERIPH_TIM3 |
+                            LL_APB1_GRP1_PERIPH_TIM6 |
+                            LL_APB1_GRP1_PERIPH_DAC1);
 }
 
 // ---------------------------------------------------------------------------

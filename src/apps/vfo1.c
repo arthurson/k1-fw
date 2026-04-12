@@ -30,8 +30,7 @@ static const char *graphMeasurementNames[] = {
     [GRAPH_NOISE] = "Noise",   //
     [GRAPH_GLITCH] = "Glitch", //
     [GRAPH_SNR] = "SNR",       //
-    [GRAPH_APRS] = "APRS",     //
-    [GRAPH_TX] = "Audio",      //
+    [GRAPH_TX] = "TX amp",   //
 };
 
 static void updateBand(void) {
@@ -425,7 +424,6 @@ static void renderMonitorMode(uint8_t BASE) {
         [GRAPH_NOISE] = {0, 255},
         [GRAPH_GLITCH] = {0, 255},
         [GRAPH_SNR] = {0, 30},
-        [GRAPH_APRS] = {0, 4095},
         [GRAPH_TX] = {0, 8192},
         [GRAPH_COUNT] = {RSSI_MIN, RSSI_MAX},
     };

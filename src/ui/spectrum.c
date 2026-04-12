@@ -354,7 +354,6 @@ void SP_AddGraphPoint(const Measurement *msm) {
   case GRAPH_NOISE:  v = msm->noise;                 break;
   case GRAPH_GLITCH: v = msm->glitch;                break;
   case GRAPH_SNR:    v = msm->snr;                   break;
-  case GRAPH_APRS:   v = BOARD_ADC_GetAPRS();        break;
   case GRAPH_TX:     v = BK4819_GetVoiceAmplitude();  break;
   default:           break;
   }
