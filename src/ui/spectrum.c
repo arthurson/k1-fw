@@ -46,11 +46,13 @@ static void updateDbmFloorEma(void) {
 }
 
 // дБм → высота бара в пикселях [0..SPECTRUM_H]
-static uint8_t dbm2Y(int16_t dbm) {
-  if (dbm <= spDbmMin) return 0;
-  if (dbm >= spDbmMax) return SPECTRUM_H;
-  uint8_t y = (uint8_t)((int32_t)(dbm - spDbmMin) * SPECTRUM_H
-                        / (spDbmMax - spDbmMin));
+static uint8_t dbm2Y(int16_t dbm, VMinMax v) {
+  int16_t dbMin = Rssi2DBm(v.vMin);
+  int16_t dbMax = Rssi2DBm(v.vMax);
+  if (dbm <= dbMin) return 0;
+  if (dbm >= dbMax) return SPECTRUM_H;
+  uint8_t y = (uint8_t)((int32_t)(dbm - dbMin) * SPECTRUM_H
+                        / (dbMax - dbMin));
   return y < 2 ? 2 : y;  // слабый сигнал — минимум 2 пикселя
 }
 /* static uint8_t dbm2Y(int16_t dbm) {
@@ -222,7 +224,7 @@ uint16_t SP_GetPeakRssi(void) { return spPeakRssiDisp ? spPeakRssiDisp : spPeakR
 
 void SP_RenderMarker(uint8_t mx, VMinMax v) {
   if (mx >= filledPoints) return;
-  uint8_t barH = dbm2Y(Rssi2DBm(rssiHistory[mx]));
+  uint8_t barH = dbm2Y(Rssi2DBm(rssiHistory[mx]), v);
   uint8_t top  = S_BOTTOM - barH;
 
   for (uint8_t y = SPECTRUM_Y + 3; y < top; y += 2)
@@ -235,10 +237,12 @@ void SP_RenderMarker(uint8_t mx, VMinMax v) {
 
 // сетка 10 дБ/дел, как TinySA
 void SP_RenderDbmGrid(VMinMax v, int8_t stepDbm) {
-  for (int16_t dbm = (spDbmMin / stepDbm) * stepDbm;
-       dbm <= spDbmMax; dbm += stepDbm) {
-    if (dbm < spDbmMin) continue;
-    uint8_t py = S_BOTTOM - dbm2Y(dbm);
+  int16_t dbMin = Rssi2DBm(v.vMin);
+  int16_t dbMax = Rssi2DBm(v.vMax);
+  for (int16_t dbm = (dbMin / stepDbm) * stepDbm;
+       dbm <= dbMax; dbm += stepDbm) {
+    if (dbm < dbMin) continue;
+    uint8_t py = S_BOTTOM - dbm2Y(dbm, v);
     for (uint8_t xi = 0; xi < MAX_POINTS; xi += 4)
       DrawHLine(xi, py, 2, C_FILL);
     PrintSmallEx(0, py - 1, POS_L, C_FILL, "%d", dbm);
@@ -253,7 +257,7 @@ void SP_Render(const Band *p, VMinMax v) {
 
   if (graphMeasurement == GRAPH_RSSI) {
     for (uint8_t i = 0; i < filledPoints; ++i) {
-      uint8_t yVal = dbm2Y(Rssi2DBm(rssiHistory[i]));
+      uint8_t yVal = dbm2Y(Rssi2DBm(rssiHistory[i]), v);
       DrawVLine(i, S_BOTTOM - yVal, yVal, C_FILL);
     }
   } else {
@@ -277,20 +281,20 @@ void SP_RenderArrow(uint32_t f) {
 }
 
 void SP_RenderRssi(uint16_t rssi, char *text, bool top, VMinMax v) {
-  uint8_t yVal = dbm2Y(Rssi2DBm(rssi));
+  uint8_t yVal = dbm2Y(Rssi2DBm(rssi), v);
   DrawHLine(0, S_BOTTOM - yVal, filledPoints, C_FILL);
   PrintSmallEx(0, S_BOTTOM - yVal + (top ? -2 : 6), POS_L, C_FILL, "%s %d",
                text, Rssi2DBm(rssi));
 }
 
 void SP_RenderLine(uint16_t rssi, VMinMax v) {
-  uint8_t yVal = dbm2Y(Rssi2DBm(rssi));
+  uint8_t yVal = dbm2Y(Rssi2DBm(rssi), v);
   DrawHLine(0, S_BOTTOM - yVal, filledPoints, C_INVERT);
 }
 
 void SP_RenderPoint(Measurement *m, uint8_t i, uint8_t n, Band *b, VMinMax r,
                     Color c) {
-  uint8_t yVal = dbm2Y(Rssi2DBm(m->rssi));
+  uint8_t yVal = dbm2Y(Rssi2DBm(m->rssi), r);
   PutPixel(i, S_BOTTOM - yVal, c);
 }
 

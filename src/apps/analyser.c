@@ -1,6 +1,7 @@
 #include "analyser.h"
 #include "../driver/systick.h"
 #include "../driver/uart.h"
+#include "../helper/analysermenu.h"
 #include "../helper/bands.h"
 #include "../helper/lootlist.h"
 #include "../helper/measurements.h"
@@ -15,6 +16,41 @@
 #include "apps.h"
 #include <stdbool.h>
 #include <string.h>
+
+// ── Analyser state ─────────────────────────────────────────────────────────
+
+typedef struct {
+  int16_t dbMin;
+  int16_t dbMax;
+} AnalyserSettings;
+
+static AnalyserSettings aSettings = {.dbMin = -120, .dbMax = -20};
+static uint32_t analyserSaveTime;
+
+static void analyserSettingsLoad(void) {
+  STORAGE_LOAD("analyser.set", 0, &aSettings);
+}
+
+static void analyserSettingsSave(void) {
+  STORAGE_SAVE("analyser.set", 0, &aSettings);
+}
+
+void ANALYSER_UpdateSave(void) {
+  if (ANALYSERMENU_IsDirty()) {
+    if (analyserSaveTime == 0) {
+      analyserSaveTime = Now() + 1000;
+    } else if (Now() > analyserSaveTime) {
+      // Sync values and save
+      aSettings.dbMin = ANALYSERMENU_GetDbmMin();
+      aSettings.dbMax = ANALYSERMENU_GetDbmMax();
+      analyserSettingsSave();
+      ANALYSERMENU_ClearDirty();
+      analyserSaveTime = 0;
+    }
+  } else {
+    analyserSaveTime = 0;
+  }
+}
 
 // ── Analyser state ─────────────────────────────────────────────────────────
 
@@ -300,6 +336,15 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
   if (REGSMENU_Key(key, state))
     return true;
 
+  // Analyser menu (long KEY_0)
+  if (key == KEY_0 && state == KEY_LONG_PRESSED) {
+    ANALYSERMENU_Toggle();
+    return true;
+  }
+
+  if (ANALYSERMENU_Key(key, state))
+    return true;
+
   if (state == KEY_RELEASED) {
     if (key == KEY_EXIT) {
       if (staticCursorFreq) {
@@ -366,6 +411,11 @@ void ANALYSER_init(void) {
   SPECTRUM_Y = 8;
   SPECTRUM_H = 44;
 
+  // Load persisted settings
+  analyserSettingsLoad();
+  ANALYSERMENU_SetDbmMin(aSettings.dbMin);
+  ANALYSERMENU_SetDbmMax(aSettings.dbMax);
+
   range.step = RADIO_GetParam(ctx, PARAM_STEP);
   range.start = 43307500;
   range.end = range.start + StepFrequencyTable[range.step] * LCD_WIDTH;
@@ -388,7 +438,12 @@ void ANALYSER_init(void) {
   BANDS_RangePush(range);
 }
 
-void ANALYSER_deinit(void) {}
+void ANALYSER_deinit(void) {
+  // Sync back from analysermenu and save
+  aSettings.dbMin = ANALYSERMENU_GetDbmMin();
+  aSettings.dbMax = ANALYSERMENU_GetDbmMax();
+  analyserSettingsSave();
+}
 
 // -------------------------------------------------------------------------
 
@@ -448,6 +503,9 @@ static void updateScan(void) {
 void ANALYSER_update(void) {
   // Check if squelch level changed and reload preset
   applySquelchPreset();
+
+  // Debounced save of analyser settings
+  ANALYSER_UpdateSave();
 
   // Сохраняем R/N/G для стрелки если частота совпала
   if (staticCursorFreq && msm->f == staticCursorFreq) {
@@ -539,7 +597,8 @@ static void renderStaticCursorInfo(void) {
 void ANALYSER_render(void) {
   STATUSLINE_RenderRadioSettings();
 
-  VMinMax v = SP_GetMinMax();
+  VMinMax v = {.vMin = DBm2Rssi(ANALYSERMENU_GetDbmMin()),
+               .vMax = DBm2Rssi(ANALYSERMENU_GetDbmMax())};
   SP_Render(&range, v);
   renderBottomFreq();
 
@@ -583,4 +642,5 @@ void ANALYSER_render(void) {
   }
 
   REGSMENU_Draw();
+  ANALYSERMENU_Draw();
 }
