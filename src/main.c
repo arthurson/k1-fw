@@ -1,5 +1,6 @@
 #include "board.h"
 #include "driver/audio.h"
+#include "driver/backlight.h"
 #include "driver/bk4819-regs.h"
 #include "driver/bk4829.h"
 #include "driver/gpio.h"
@@ -84,6 +85,7 @@ int main(void) {
 
   BOARD_Init();
   GPIO_TurnOnBacklight();
+  BACKLIGHT_SetBrightness(2);
 
   // AUDIO_IO_Init(); // Отключено — ADC/DAC DMA создают RF помехи
 
