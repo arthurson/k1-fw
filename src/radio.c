@@ -101,6 +101,7 @@ static const ParamDesc PARAM_DESC[PARAM_COUNT] = {
     [PARAM_AF_TX_3K] = {"TX 3K", 0, 9},
     [PARAM_DEV] = {"DEV", 0, 2550},
     [PARAM_MIC] = {"MIC", 0, 16},
+    [PARAM_AGC] = {"AGC", 0, 127},
     [PARAM_XTAL] = {"XTAL", 0, XTAL_3_38_4M + 1},
     [PARAM_SCRAMBLER] = {"SCR", 0, 10},
     [PARAM_FILTER] = {"Filter", 0, FILTER_AUTO + 1},
@@ -534,6 +535,9 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
   case PARAM_DEV:
     BK4819_SetRegValue(RS_DEV, ctx->dev);
     return true;
+  case PARAM_AGC:
+    BK4819_SetRegValue(RS_AGC, ctx->agc);
+    return true;
   case PARAM_UPCONVERTER:
     // Upconverter affects frequency calculation, requires retune
     return true;
@@ -610,6 +614,7 @@ static bool setParamSI4732(VFOContext *ctx, ParamType p) {
   case PARAM_AF_TX_3K:
   case PARAM_DEV:
   case PARAM_MIC:
+  case PARAM_AGC:
   case PARAM_XTAL:
   case PARAM_SCRAMBLER:
   case PARAM_FILTER:
@@ -937,7 +942,7 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
       RADIO_SetParam(ctx, PARAM_AFC, 0, save_to_eeprom);
       break;
     default:
-      RADIO_SetParam(ctx, PARAM_AFC, 8, save_to_eeprom);
+      // RADIO_SetParam(ctx, PARAM_AFC, 8, save_to_eeprom);
       break;
     }
 
@@ -1048,6 +1053,9 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     break;
   case PARAM_MIC:
     ctx->mic = value;
+    break;
+  case PARAM_AGC:
+    ctx->agc = value;
     break;
   case PARAM_XTAL:
     ctx->xtal = (XtalMode)value;
@@ -1182,6 +1190,8 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
     return ctx->filter;
   case PARAM_MIC:
     return ctx->mic;
+  case PARAM_AGC:
+    return ctx->agc;
   case PARAM_DEV:
     return ctx->dev;
   case PARAM_UPCONVERTER:
@@ -2126,6 +2136,7 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
   case PARAM_AFC_SPD:
   case PARAM_DEV:
   case PARAM_MIC:
+  case PARAM_AGC:
   case PARAM_XTAL:
   case PARAM_SCRAMBLER:
   case PARAM_SQUELCH_VALUE:

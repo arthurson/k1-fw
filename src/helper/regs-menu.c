@@ -40,6 +40,8 @@ static const ParamType paramsBK4819[] = {
     PARAM_AFC,           //
     PARAM_AFC_SPD,       //
     PARAM_DEV,           //
+    PARAM_MIC,           //
+    PARAM_AGC,           //
     PARAM_XTAL,          //
     PARAM_SCRAMBLER,     //
     PARAM_FILTER,        //

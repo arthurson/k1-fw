@@ -82,7 +82,6 @@ static void writeSpurParam(uint8_t idx, uint16_t val) {
 
   if (p->maxVal == 0) {
     BK4819_WriteRegister(p->reg, val);
-    dirty = true;
     gRedrawScreen = true;
     return;
   }
@@ -90,7 +89,6 @@ static void writeSpurParam(uint8_t idx, uint16_t val) {
   uint16_t mask = ((1 << p->width) - 1) << p->shift;
   uint16_t newVal = (regVal & ~mask) | ((val << p->shift) & mask);
   BK4819_WriteRegister(p->reg, newVal);
-  dirty = true;
   gRedrawScreen = true;
 }
 

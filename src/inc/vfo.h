@@ -64,6 +64,7 @@ typedef enum {
   PARAM_AF_TX_3K,
   PARAM_DEV,
   PARAM_MIC,
+  PARAM_AGC,
   PARAM_XTAL,
   PARAM_SCRAMBLER,
   PARAM_FILTER,
@@ -183,6 +184,7 @@ typedef struct {
   uint8_t bandwidth : 4;         // Полоса пропускания
   uint8_t bandwidth_index : 4;
   uint8_t mic : 4;
+  uint8_t agc;
   Radio radio_type : 4;
   uint8_t gain : 5;
   uint8_t modulation_index : 3;

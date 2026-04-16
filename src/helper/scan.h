@@ -132,8 +132,4 @@ extern const char *SCAN_MODE_NAMES[];
 extern const char *SCAN_STATE_NAMES[];
 ScanState SCAN_GetState(void);
 
-void SCAN_SetAlgo(ScanAlgo algo);
-ScanAlgo SCAN_GetAlgo(void);
-const char *SCAN_GetAlgoName(void);
-
 #endif

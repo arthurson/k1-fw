@@ -22,7 +22,6 @@ static bool pttWasLongPressed = false;
 
 static char String[16];
 
-static ScanAlgo scanAlgo;
 static bool showSpectrum;
 
 // Для определения состояния CHK: отслеживаем изменение частоты
@@ -140,11 +139,6 @@ static bool handleRepeatableKeys(KEY_Code_t key) {
   case KEY_7:
     SCAN_SetDelay(
         AdjustU(SCAN_GetDelay(), 0, 10000, key == KEY_1 ? 100 : -100));
-    return true;
-  case KEY_2:
-  case KEY_8:
-    scanAlgo = IncDecU(scanAlgo, 0, SCAN_ALGO_COUNT, key == KEY_2);
-    SCAN_SetAlgo(scanAlgo);
     return true;
 
   case KEY_3:
@@ -363,9 +357,6 @@ void SCANER_render(void) {
   renderBandBounds(LCD_HEIGHT - 2);
   PrintSmallEx(LCD_XCENTER, LCD_HEIGHT - 2, POS_C, C_FILL, "%s",
                RADIO_GetParamValueString(ctx, PARAM_FREQUENCY));
-
-  PrintSmallEx(LCD_WIDTH - 1, LCD_HEIGHT - 16, POS_R, C_FILL, "%s",
-               SCAN_GetAlgoName());
 
   REGSMENU_Draw();
 }
