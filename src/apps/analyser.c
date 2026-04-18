@@ -29,6 +29,12 @@
 #define DELAY_MAX_US 90000
 #define DEFAULT_RANGE_START 43307500u
 
+// dBm limits
+#define DBM_MIN_LO -140
+#define DBM_MIN_HI 9
+#define DBM_MAX_LO -139
+#define DBM_MAX_HI 10
+
 // Waterfall geometry
 #define WF_H 16
 #define WF_GAP 1
@@ -105,7 +111,7 @@ static uint32_t markerBF;
 // Waterfall
 static bool waterfallOn;
 static uint8_t wfBuf[WF_H][LCD_WIDTH]; // [row][x] = rssi clamped to 0..255
-static uint8_t wfHead; // текущая (пишущаяся) строка
+static uint8_t wfHead;                 // текущая (пишущаяся) строка
 static uint8_t
     wfFilled; // кол-во полностью заполненных старых строк (0..WF_H-1)
 
@@ -123,6 +129,9 @@ typedef enum {
 static SqEditParam sqEditParam = SQ_EDIT_RSSI;
 static uint8_t sqEditLevel;
 static uint8_t lastSquelchLevel = SQ_LEVEL_INVALID;
+
+// dBm tuner (редактирует верхнюю/нижнюю границу шкалы Y)
+static bool showDbmTuner;
 
 // ── Delay helpers ──────────────────────────────────────────────────────────
 
@@ -172,10 +181,6 @@ static void applySquelchPreset(void) {
 }
 
 // ── Markers ────────────────────────────────────────────────────────────────
-
-static inline bool freqInRange(uint32_t f) {
-  return f >= range.start && f <= range.end;
-}
 
 // Цикл: -- → A → A+B → --
 static void toggleMarker(uint32_t f) {
@@ -249,12 +254,37 @@ static void wfRender(VMinMax v) {
     const uint8_t *line = wfBuf[rowIdx];
     for (uint8_t x = 0; x < LCD_WIDTH; x++) {
       if (line[x] > thr) {
-        // TODO: замените PutPixel на функцию вашего st7565-драйвера
-        // если имя отличается (например DrawPixel / PxSet / и т.п.)
         PutPixel(x, y, 1);
       }
     }
   }
+}
+
+// ── dBm tuner helpers ──────────────────────────────────────────────────────
+
+static int16_t clampI16(int16_t v, int16_t lo, int16_t hi) {
+  if (v < lo)
+    return lo;
+  if (v > hi)
+    return hi;
+  return v;
+}
+
+// Применить новые min/max с clamp и гарантией min < max
+static void applyDbmBounds(int16_t newMin, int16_t newMax, bool maxChanged) {
+  newMin = clampI16(newMin, DBM_MIN_LO, DBM_MIN_HI);
+  newMax = clampI16(newMax, DBM_MAX_LO, DBM_MAX_HI);
+  if (newMax <= newMin) {
+    // Двигаем тот, который пользователь НЕ крутил
+    if (maxChanged)
+      newMin = newMax - 1;
+    else
+      newMax = newMin + 1;
+  }
+  ANALYSERMENU_SetDbmMin(newMin);
+  ANALYSERMENU_SetDbmMax(newMax);
+  markSettingsDirty();
+  gRedrawScreen = true;
 }
 
 // ── Save scheduler ─────────────────────────────────────────────────────────
@@ -310,6 +340,8 @@ static void onStaticCursorFreq(uint32_t fs, uint32_t fe) {
 static char getModeChar(void) {
   if (showSqTuner)
     return 'Q';
+  if (showDbmTuner)
+    return 'D';
   if (staticCursorFreq)
     return 'C';
   if (listen)
@@ -320,6 +352,30 @@ static char getModeChar(void) {
 }
 
 // ── Key handlers ───────────────────────────────────────────────────────────
+
+// dBm tuner: 2/8 крутят min, 3/9 крутят max. Autorepeat через LONG_PRESSED_CONT.
+static bool dbmTunerKey(KEY_Code_t key, Key_State_t state) {
+  int16_t dbMin = ANALYSERMENU_GetDbmMin();
+  int16_t dbMax = ANALYSERMENU_GetDbmMax();
+
+  switch (key) {
+  case KEY_2:
+    applyDbmBounds(dbMin + 1, dbMax, false);
+    return true;
+  case KEY_8:
+    applyDbmBounds(dbMin - 1, dbMax, false);
+    return true;
+  case KEY_3:
+    applyDbmBounds(dbMin, dbMax + 1, true);
+    return true;
+  case KEY_9:
+    applyDbmBounds(dbMin, dbMax - 1, true);
+    return true;
+  default:
+    break;
+  }
+  return false;
+}
 
 static bool sqTunerKey(KEY_Code_t key, Key_State_t state) {
   switch (key) {
@@ -514,7 +570,15 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     return true;
 
   case KEY_6:
-    lockToPeak();
+    if (state == KEY_LONG_PRESSED) {
+      showDbmTuner = !showDbmTuner;
+      if (showDbmTuner)
+        showSqTuner = false;
+      return true;
+    }
+    if (state == KEY_RELEASED) {
+      lockToPeak();
+    }
     return true;
 
   case KEY_SIDE1:
@@ -572,10 +636,15 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
         showSqTuner = false;
         return true;
       }
+      if (showDbmTuner) {
+        showDbmTuner = false;
+        return true;
+      }
     }
     if (key == KEY_F) {
       showSqTuner = !showSqTuner;
       if (showSqTuner) {
+        showDbmTuner = false;
         sqEditLevel = ctx->squelch.value;
         sqApplyThresholds(GetSqlPreset(sqEditLevel, ctx->frequency));
         sqEditParam = SQ_EDIT_RSSI;
@@ -598,6 +667,8 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
 
   if (state == KEY_RELEASED || state == KEY_LONG_PRESSED ||
       state == KEY_LONG_PRESSED_CONT) {
+    if (showDbmTuner && dbmTunerKey(key, state))
+      return true;
     if (showSqTuner && sqTunerKey(key, state))
       return true;
     if (still && stillModeKey(key, state))
@@ -622,7 +693,6 @@ void ANALYSER_init(void) {
   analyserSettingsLoad();
   ANALYSERMENU_SetDbmMin(aSettings.dbMin);
   ANALYSERMENU_SetDbmMax(aSettings.dbMax);
-  ANALYSERMENU_SetDirtyCallback(markSettingsDirty);
 
   if (aSettings.delay > 0 && aSettings.delay <= DELAY_MAX_US) {
     delay = aSettings.delay;
@@ -655,6 +725,9 @@ void ANALYSER_init(void) {
 
   markerAF = 0;
   markerBF = 0;
+
+  showDbmTuner = false;
+  showSqTuner = false;
 
   scanAwaitingSettle = false;
   settingsDirty = false;
@@ -812,6 +885,15 @@ static void renderSqTuner(void) {
   PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 4, POS_R, C_FILL, "L=%u", sqEditLevel);
 }
 
+// Оверлей dBm tuner: значения max/min с подсказкой клавиш в скобках.
+// Рисуется по центру на месте UI_DrawLoot.
+static void renderDbmTuner(void) {
+  int16_t dbMin = ANALYSERMENU_GetDbmMin();
+  int16_t dbMax = ANALYSERMENU_GetDbmMax();
+  PrintSmallEx(LCD_XCENTER, 14, POS_C, C_FILL, "max=%d (3/9)", dbMax);
+  PrintSmallEx(LCD_XCENTER, 14 + 6, POS_C, C_FILL, "min=%d (2/8)", dbMin);
+}
+
 static void renderPeakMarker(VMinMax v) {
   uint32_t f = SP_GetPeakF();
   uint16_t rssi = SP_GetPeakRssi();
@@ -879,13 +961,17 @@ void ANALYSER_render(void) {
     }
     renderStillInfo();
   } else {
+    // scan mode
     renderPeakMarker(v);
     CUR_Render();
-    if (gLastActiveLoot)
+    if (showDbmTuner) {
+      renderDbmTuner();
+    } else if (gLastActiveLoot) {
       UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, 14, POS_C);
+    }
   }
 
-  // Пользовательские маркеры видны только в analyzer-режиме
+  // Пользовательские маркеры видны в scan-режиме (в т.ч. во время tuner)
   if (!still && !showSqTuner && !staticCursorFreq) {
     renderUserMarker(markerAF, 'A');
     renderUserMarker(markerBF, 'B');

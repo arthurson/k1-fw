@@ -13,197 +13,154 @@
 
 static bool inMenu;
 
-#define ANALYSERMENU_MAX_ITEMS 10
-
-static MenuItem menuItems[ANALYSERMENU_MAX_ITEMS];
-static uint8_t numItems;
-
-static Menu analyserMenu = {
-    .title = "Settings",
-    .items = menuItems,
-    .itemHeight = 7,
-    .width = 48,
-    .x = LCD_WIDTH - 48,
-};
-
 // ---------------------------------------------------------------------------
-// dBm range settings (persisted by analyser.c via analyser.set)
-// ---------------------------------------------------------------------------
-
-static int16_t dbmMin = -120;
-static int16_t dbmMax = -20;
-static void (*dirtyCallback)(void) = NULL;
-
-int16_t ANALYSERMENU_GetDbmMin(void) { return dbmMin; }
-int16_t ANALYSERMENU_GetDbmMax(void) { return dbmMax; }
-void ANALYSERMENU_SetDbmMin(int16_t v) { dbmMin = v; }
-void ANALYSERMENU_SetDbmMax(int16_t v) { dbmMax = v; }
-
-void ANALYSERMENU_SetDirtyCallback(void (*cb)(void)) { dirtyCallback = cb; }
-
-static inline void notifyDirty(void) {
-  if (dirtyCallback) dirtyCallback();
-}
-
-// ---------------------------------------------------------------------------
-// Spur parameters — direct BK4829 register fields
+// Register descriptor
 // ---------------------------------------------------------------------------
 
 typedef struct {
   const char *name;
   uint8_t reg;
   uint8_t shift;
-  uint8_t width;
-  uint16_t maxVal; // 0 = full register
-  uint16_t step;   // display step (1=raw, 100=divide by 100)
-} SpurParam;
+  uint8_t width; // битовая ширина поля; 0 = весь регистр
+  uint16_t maxVal; // 0 = без ограничения (для width=0 трактуется как 0xFFFF)
+  uint16_t step; // шаг изменения / делитель для отображения
+} RegDesc;
 
-static const SpurParam spurParams[] = {
-    // {name, reg, shift, width, maxVal, step}
-    {"DSP V", 0x37, 12, 3, 7, 1},    // REG_37<14:12> dsp voltage
-    {"vReg",  0x1A, 12, 4, 15, 1},   // REG_1A<15:12> vReg
-    {"iBit",  0x1A, 8,  4, 15, 1},   // REG_1A<11:8> iBit
-    {"pllCp", 0x1F, 8,  4, 15, 1},   // REG_1F<11:8> pll_cp
-    {"vcoLdo",0x1F, 12, 4, 15, 1},   // REG_1F<15:12> vco_ldo_lvl
-    {"Bnd3E", 0x3E, 0,  0, 0, 100},  // REG_3E threshold (step 100)
-    {"IF_C",  0x1C, 0,  0, 0, 1},    // REG_1C IF filter (full reg)
-    {"IF_D",  0x1D, 0,  0, 0, 1},    // REG_1D IF filter (full reg)
+// Единственная точка конфигурации — добавь строку, и меню само её покажет.
+// Формат: {name, reg, shift, width, maxVal, step}
+static const RegDesc regDescs[] = {
+    {"DSP V", 0x37, 12, 3, 7, 1},   // REG_37<14:12> dsp voltage
+    {"vReg", 0x1A, 12, 4, 15, 1},   // REG_1A<15:12> vReg
+    {"iBit", 0x1A, 8, 4, 15, 1},    // REG_1A<11:8> iBit
+    {"pllCp", 0x1F, 8, 4, 15, 1},   // REG_1F<11:8> pll_cp
+    {"vcoLdo", 0x1F, 12, 4, 15, 1}, // REG_1F<15:12> vco_ldo_lvl
+    {"Bnd3E", 0x3E, 0, 0, 0, 100},  // REG_3E threshold
+    {"IF_C", 0x1C, 0, 0, 0, 1},     // REG_1C IF filter
+    {"IF_D", 0x1D, 0, 0, 0, 1},     // REG_1D IF filter
 };
 
-#define SPUR_COUNT ARRAY_SIZE(spurParams)
+#define REG_COUNT ARRAY_SIZE(regDescs)
 
-static uint16_t readSpurParam(uint8_t idx) {
-  const SpurParam *p = &spurParams[idx];
-  uint16_t regVal = BK4819_ReadRegister(p->reg);
-  if (p->maxVal == 0) return regVal;
-  return (regVal >> p->shift) & ((1 << p->width) - 1);
+static MenuItem menuItems[REG_COUNT];
+
+static Menu analyserMenu = {
+    .title = "Settings",
+    .items = menuItems,
+    .itemHeight = 7,
+    .width = 60,
+    .x = LCD_WIDTH - 60,
+};
+
+// ---------------------------------------------------------------------------
+// dBm range — publicly readable/writable, UI живёт в analyser.c
+// ---------------------------------------------------------------------------
+
+static int16_t dbmMin = -120;
+static int16_t dbmMax = -20;
+
+int16_t ANALYSERMENU_GetDbmMin(void) { return dbmMin; }
+int16_t ANALYSERMENU_GetDbmMax(void) { return dbmMax; }
+void ANALYSERMENU_SetDbmMin(int16_t v) { dbmMin = v; }
+void ANALYSERMENU_SetDbmMax(int16_t v) { dbmMax = v; }
+
+// ---------------------------------------------------------------------------
+// Register access
+// ---------------------------------------------------------------------------
+
+static uint16_t regRead(uint8_t idx) {
+  const RegDesc *d = &regDescs[idx];
+  uint16_t regVal = BK4819_ReadRegister(d->reg);
+  if (d->width == 0)
+    return regVal;
+  return (regVal >> d->shift) & ((1u << d->width) - 1u);
 }
 
-static void writeSpurParam(uint8_t idx, uint16_t val) {
-  const SpurParam *p = &spurParams[idx];
-  uint16_t regVal = BK4819_ReadRegister(p->reg);
-
-  if (p->maxVal == 0) {
-    BK4819_WriteRegister(p->reg, val);
-    gRedrawScreen = true;
-    return;
+static void regWrite(uint8_t idx, uint16_t val) {
+  const RegDesc *d = &regDescs[idx];
+  if (d->width == 0) {
+    BK4819_WriteRegister(d->reg, val);
+  } else {
+    uint16_t regVal = BK4819_ReadRegister(d->reg);
+    uint16_t mask = ((1u << d->width) - 1u) << d->shift;
+    uint16_t newVal = (regVal & ~mask) | ((val << d->shift) & mask);
+    BK4819_WriteRegister(d->reg, newVal);
   }
-
-  uint16_t mask = ((1 << p->width) - 1) << p->shift;
-  uint16_t newVal = (regVal & ~mask) | ((val << p->shift) & mask);
-  BK4819_WriteRegister(p->reg, newVal);
   gRedrawScreen = true;
+}
+
+static uint16_t regMaxVal(uint8_t idx) {
+  const RegDesc *d = &regDescs[idx];
+  if (d->maxVal)
+    return d->maxVal;
+  if (d->width)
+    return (1u << d->width) - 1u;
+  return 0xFFFF;
 }
 
 // ---------------------------------------------------------------------------
 // Menu callbacks
 // ---------------------------------------------------------------------------
 
-static void getValDbmMin(const MenuItem *item, char *buf, uint8_t buf_size) {
-  (void)item;
-  sprintf(buf, "%d", dbmMin);
-}
-
-static void getValDbmMax(const MenuItem *item, char *buf, uint8_t buf_size) {
-  (void)item;
-  sprintf(buf, "%d", dbmMax);
-}
-
-static void updateValDbmMin(const MenuItem *item, bool up) {
-  (void)item;
-  dbmMin = up ? dbmMin + 1 : dbmMin - 1;
-  if (dbmMin < -140) dbmMin = -140;
-  if (dbmMin > 9) dbmMin = 9;
-  if (dbmMax <= dbmMin) dbmMax = dbmMin + 1;
-  notifyDirty();
-  gRedrawScreen = true;
-}
-
-static void updateValDbmMax(const MenuItem *item, bool up) {
-  (void)item;
-  dbmMax = up ? dbmMax + 1 : dbmMax - 1;
-  if (dbmMax < -139) dbmMax = -139;
-  if (dbmMax > 10) dbmMax = 10;
-  if (dbmMin >= dbmMax) dbmMin = dbmMax - 1;
-  notifyDirty();
-  gRedrawScreen = true;
-}
-
-static void getValSpur(const MenuItem *item, char *buf, uint8_t buf_size) {
+static void getVal(const MenuItem *item, char *buf, uint8_t buf_size) {
   uint8_t idx = (uint8_t)(uintptr_t)item->submenu;
-  uint16_t v = readSpurParam(idx);
-  uint16_t step = spurParams[idx].step;
-  if (step == 1) {
-    sprintf(buf, "%u", v);
+  uint16_t v = regRead(idx);
+  uint16_t s = regDescs[idx].step;
+  snprintf(buf, buf_size, "%5u", (s > 1) ? (unsigned)(v / s) : (unsigned)v);
+}
+
+static void updateVal(const MenuItem *item, bool up) {
+  uint8_t idx = (uint8_t)(uintptr_t)item->submenu;
+  uint16_t v = regRead(idx);
+  uint16_t maxV = regMaxVal(idx);
+  uint16_t step = regDescs[idx].step;
+  if (step == 0)
+    step = 1;
+
+  if (up) {
+    v = (v + step > maxV) ? 0 : v + step;
   } else {
-    sprintf(buf, "%u", v / step);
+    v = (v < step) ? maxV : v - step;
   }
-}
-
-static void updateValSpur(const MenuItem *item, bool up) {
-  uint8_t idx = (uint8_t)(uintptr_t)item->submenu;
-  uint16_t v = readSpurParam(idx);
-  uint16_t maxVal = spurParams[idx].maxVal;
-  if (maxVal == 0) maxVal = 0xFFFF;
-  v = up ? v + spurParams[idx].step : v - spurParams[idx].step;
-  if (v > maxVal) v = 0;
-  writeSpurParam(idx, v);
+  regWrite(idx, v);
 }
 
 // ---------------------------------------------------------------------------
-// Build menu
+// Render
 // ---------------------------------------------------------------------------
-
-typedef struct {
-  const char *name;
-  void (*get_value_text)(const MenuItem *, char *, uint8_t);
-  void (*change_value)(const MenuItem *, bool);
-  uint8_t spurIdx; // 0xFF = db param, 0..SPUR_COUNT-1 = spur param
-} AnalyserMenuEntry;
-
-static const AnalyserMenuEntry entries[] = {
-    {"Min dB:", getValDbmMin, updateValDbmMin, 0xFF},
-    {"Max dB:", getValDbmMax, updateValDbmMax, 0xFF},
-    {"DSP V",  getValSpur, updateValSpur, 0},
-    {"vReg",   getValSpur, updateValSpur, 1},
-    {"iBit",   getValSpur, updateValSpur, 2},
-    {"pllCp",  getValSpur, updateValSpur, 3},
-    {"vcoLdo", getValSpur, updateValSpur, 4},
-    {"Bnd3E",  getValSpur, updateValSpur, 5},
-    {"IF_C",   getValSpur, updateValSpur, 6},
-    {"IF_D",   getValSpur, updateValSpur, 7},
-};
 
 static void renderAnalyserMenuItem(uint16_t index, uint8_t visIndex) {
   const MenuItem *item = &analyserMenu.items[index];
-  const uint8_t ex = analyserMenu.x + analyserMenu.width;
   const uint8_t y = analyserMenu.y + visIndex * analyserMenu.itemHeight;
   const uint8_t by = y + analyserMenu.itemHeight - 2;
-  (void)ex;
 
-  char value_buf[16];
+  char value_buf[8];
   item->get_value_text(item, value_buf, sizeof(value_buf));
 
-  PrintSmall(analyserMenu.x + 2, by, "%s%s", item->name, value_buf);
+  // Имя слева от рамки, значение справа — не слипается
+  PrintSmall(analyserMenu.x + 2, by, "%s", item->name);
+  PrintSmallEx(analyserMenu.x + analyserMenu.width - 2, by, POS_R, C_FILL, "%s",
+               value_buf);
 }
 
-static void initMenu(void) {
-  numItems = 0;
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
 
-  for (uint8_t i = 0; i < ARRAY_SIZE(entries); ++i) {
-    MenuItem *m = &menuItems[numItems++];
-    m->name = entries[i].name;
+static void initMenu(void) {
+  for (uint8_t i = 0; i < REG_COUNT; ++i) {
+    MenuItem *m = &menuItems[i];
+    m->name = regDescs[i].name;
     m->setting = 0;
-    m->get_value_text = entries[i].get_value_text;
-    m->change_value = entries[i].change_value;
-    m->submenu = (struct Menu *)(uintptr_t)entries[i].spurIdx;
+    m->get_value_text = getVal;
+    m->change_value = updateVal;
+    m->submenu = (struct Menu *)(uintptr_t)i;
     m->action = NULL;
   }
 
-  analyserMenu.num_items = numItems;
+  analyserMenu.num_items = REG_COUNT;
   analyserMenu.render_item = renderAnalyserMenuItem;
   analyserMenu.y = SPECTRUM_Y;
-  analyserMenu.height = numItems * analyserMenu.itemHeight;
+  analyserMenu.height = REG_COUNT * analyserMenu.itemHeight;
   MENU_Init(&analyserMenu);
 }
 
@@ -218,18 +175,10 @@ void ANALYSERMENU_Draw(void) {
 }
 
 bool ANALYSERMENU_Key(KEY_Code_t key, Key_State_t state) {
-  if (state == KEY_RELEASED) {
-    switch (key) {
-    case KEY_EXIT:
-      if (inMenu) {
-        inMenu = false;
-        MENU_Deinit();
-        return true;
-      }
-      break;
-    default:
-      break;
-    }
+  if (state == KEY_RELEASED && key == KEY_EXIT && inMenu) {
+    inMenu = false;
+    MENU_Deinit();
+    return true;
   }
 
   if (inMenu && MENU_HandleInput(key, state)) {
@@ -250,7 +199,4 @@ bool ANALYSERMENU_Toggle(void) {
   return inMenu;
 }
 
-bool ANALYSERMENU_IsActive(void) {
-  return inMenu;
-}
-
+bool ANALYSERMENU_IsActive(void) { return inMenu; }

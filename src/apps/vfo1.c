@@ -4,6 +4,7 @@
 #include "../driver/systick.h"
 #include "../driver/uart.h"
 #include "../external/printf/printf.h"
+#include "../helper/analysermenu.h"
 #include "../helper/bands.h"
 #include "../helper/lootlist.h"
 #include "../helper/measurements.h"
@@ -30,7 +31,7 @@ static const char *graphMeasurementNames[] = {
     [GRAPH_NOISE] = "Noise",   //
     [GRAPH_GLITCH] = "Glitch", //
     [GRAPH_SNR] = "SNR",       //
-    [GRAPH_TX] = "TX amp",   //
+    [GRAPH_TX] = "TX amp",     //
 };
 
 static void updateBand(void) {
@@ -151,6 +152,10 @@ static bool handleLongPress(KEY_Code_t key) {
     return true;
 
   case KEY_0:
+    ANALYSERMENU_Toggle();
+    return true;
+
+  case KEY_9:
     RADIO_IncDecParam(ctx, PARAM_MODULATION, true, true);
     return true;
 
@@ -249,6 +254,9 @@ static GraphMeasurement _graphMeasurement;
 bool VFO1_key(KEY_Code_t key, Key_State_t state) {
   // return false;
   if (REGSMENU_Key(key, state)) {
+    return true;
+  }
+  if (ANALYSERMENU_Key(key, state)) {
     return true;
   }
   if (VFOMENU_Key(key, state)) {
@@ -484,5 +492,6 @@ void VFO1_render(void) {
   }
 
   REGSMENU_Draw();
+  ANALYSERMENU_Draw();
   VFOMENU_Draw();
 }
