@@ -13,8 +13,7 @@ bool ANALYSERMENU_Toggle(void);
 bool ANALYSERMENU_IsActive(void);
 
 // Dirty flag for debounced saving
-bool ANALYSERMENU_IsDirty(void);
-void ANALYSERMENU_ClearDirty(void);
+void ANALYSERMENU_SetDirtyCallback(void (*cb)(void));
 
 // Get current dBm values from the menu settings
 int16_t ANALYSERMENU_GetDbmMin(void);

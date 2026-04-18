@@ -32,15 +32,18 @@ static Menu analyserMenu = {
 
 static int16_t dbmMin = -120;
 static int16_t dbmMax = -20;
-static bool dirty;
+static void (*dirtyCallback)(void) = NULL;
 
 int16_t ANALYSERMENU_GetDbmMin(void) { return dbmMin; }
 int16_t ANALYSERMENU_GetDbmMax(void) { return dbmMax; }
 void ANALYSERMENU_SetDbmMin(int16_t v) { dbmMin = v; }
 void ANALYSERMENU_SetDbmMax(int16_t v) { dbmMax = v; }
 
-bool ANALYSERMENU_IsDirty(void) { return dirty; }
-void ANALYSERMENU_ClearDirty(void) { dirty = false; }
+void ANALYSERMENU_SetDirtyCallback(void (*cb)(void)) { dirtyCallback = cb; }
+
+static inline void notifyDirty(void) {
+  if (dirtyCallback) dirtyCallback();
+}
 
 // ---------------------------------------------------------------------------
 // Spur parameters — direct BK4829 register fields
@@ -112,7 +115,7 @@ static void updateValDbmMin(const MenuItem *item, bool up) {
   if (dbmMin < -140) dbmMin = -140;
   if (dbmMin > 9) dbmMin = 9;
   if (dbmMax <= dbmMin) dbmMax = dbmMin + 1;
-  dirty = true;
+  notifyDirty();
   gRedrawScreen = true;
 }
 
@@ -122,7 +125,7 @@ static void updateValDbmMax(const MenuItem *item, bool up) {
   if (dbmMax < -139) dbmMax = -139;
   if (dbmMax > 10) dbmMax = 10;
   if (dbmMin >= dbmMax) dbmMin = dbmMax - 1;
-  dirty = true;
+  notifyDirty();
   gRedrawScreen = true;
 }
 
@@ -176,6 +179,7 @@ static void renderAnalyserMenuItem(uint16_t index, uint8_t visIndex) {
   const uint8_t ex = analyserMenu.x + analyserMenu.width;
   const uint8_t y = analyserMenu.y + visIndex * analyserMenu.itemHeight;
   const uint8_t by = y + analyserMenu.itemHeight - 2;
+  (void)ex;
 
   char value_buf[16];
   item->get_value_text(item, value_buf, sizeof(value_buf));
@@ -249,3 +253,4 @@ bool ANALYSERMENU_Toggle(void) {
 bool ANALYSERMENU_IsActive(void) {
   return inMenu;
 }
+

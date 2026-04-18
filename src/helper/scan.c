@@ -15,9 +15,9 @@
 #define STE_DEBOUNCE_MS 250 // окно подавления STE-хвоста
 
 // --- Адаптивный детектор (EMA) ---
-#define ADAP_MIN_SAMPLES 8   // прогрев
-#define ADAP_EMA_SHIFT 4     // alpha = 1/16
-#define ADAP_WARMUP_SHIFT 2  // alpha = 1/4 при прогреве (быстрая сходимость)
+#define ADAP_MIN_SAMPLES 8 // прогрев
+#define ADAP_EMA_SHIFT 4   // alpha = 1/16
+#define ADAP_WARMUP_SHIFT 2 // alpha = 1/4 при прогреве (быстрая сходимость)
 #define DELTA_RSSI_THRESH 8  // порог резкого роста rssi
 #define DELTA_NOISE_THRESH 4 // порог резкого падения noise
 #define FLOOR_MARGIN_RSSI 6  // запас над EMA rssi
@@ -25,7 +25,7 @@
 #define FLOOR_MARGIN_GLITCH 3
 
 typedef struct {
-  uint16_t rssiEma;   // значение << ADAP_EMA_SHIFT
+  uint16_t rssiEma; // значение << ADAP_EMA_SHIFT
   uint16_t noiseEma;
   uint16_t glitchEma;
   uint8_t count;
@@ -127,8 +127,8 @@ static void AdapFloor_UpdateEma(uint8_t rssi, uint8_t noise, uint8_t glitch) {
     afloor.glitchEma = (uint16_t)glitch << ADAP_EMA_SHIFT;
   } else {
     // при прогреве быстрее, потом медленнее
-    uint8_t sh = (afloor.count < ADAP_MIN_SAMPLES) ? ADAP_WARMUP_SHIFT
-                                                    : ADAP_EMA_SHIFT;
+    uint8_t sh =
+        (afloor.count < ADAP_MIN_SAMPLES) ? ADAP_WARMUP_SHIFT : ADAP_EMA_SHIFT;
     afloor.rssiEma = EmaUpdate(afloor.rssiEma, rssi, sh);
     afloor.noiseEma = EmaUpdate(afloor.noiseEma, noise, sh);
     afloor.glitchEma = EmaUpdate(afloor.glitchEma, glitch, sh);
@@ -319,26 +319,26 @@ static void HandleStateTuning(void) {
   scan.measurement.glitch = BK4819_GetGlitch();
   scan.measurement.f = scan.currentF;
 
-  // глушим VCO сразу после замера — RSSI-детектор видит тишину, размазывания нет
-  BK4819_WriteRegister(BK4819_REG_30,
-                       BK4819_ReadRegister(BK4819_REG_30) &
-                           ~BK4819_REG_30_ENABLE_PLL_VCO);
+  // глушим VCO сразу после замера — RSSI-детектор видит тишину, размазывания
+  // нет
+  BK4819_WriteRegister(BK4819_REG_30, BK4819_ReadRegister(BK4819_REG_30) &
+                                          ~BK4819_REG_30_ENABLE_PLL_VCO);
 
   scan.scanCycles++;
   UpdateCPS();
 
+  SP_AddPoint(&scan.measurement);
   if (scan.mode == SCAN_MODE_ANALYSER) {
-    SP_AddPoint(&scan.measurement);
     scan.currentF += scan.stepF;
     return;
   }
 
   if (AdaptiveSq_Check(scan.measurement.rssi, scan.measurement.noise,
                        scan.measurement.glitch)) {
-    // включаем VCO обратно — CHECKING нужен живой приёмник для аппаратного шумодава
-    BK4819_WriteRegister(BK4819_REG_30,
-                         BK4819_ReadRegister(BK4819_REG_30) |
-                             BK4819_REG_30_ENABLE_PLL_VCO);
+    // включаем VCO обратно — CHECKING нужен живой приёмник для аппаратного
+    // шумодава
+    BK4819_WriteRegister(BK4819_REG_30, BK4819_ReadRegister(BK4819_REG_30) |
+                                            BK4819_REG_30_ENABLE_PLL_VCO);
     ChangeState(SCAN_STATE_CHECKING);
   } else {
     scan.measurement.open = false;
@@ -407,8 +407,8 @@ static void HandleStateListening(void) {
     shouldLeave = ElapsedMs() >= SCAN_TIMEOUTS[gSettings.sqOpenedTimeout];
   } else {
     // закрыт: уходим по времени с момента закрытия
-    shouldLeave = sqClosedAt &&
-                  (Now() - sqClosedAt >= SCAN_TIMEOUTS[gSettings.sqClosedTimeout]);
+    shouldLeave = sqClosedAt && (Now() - sqClosedAt >=
+                                 SCAN_TIMEOUTS[gSettings.sqClosedTimeout]);
   }
 
   if (shouldLeave) {
@@ -441,7 +441,8 @@ void SCAN_Check(void) {
   if (scan.mode == SCAN_MODE_NONE)
     return;
 
-  // мультивотч только в SINGLE — при активном сканировании он конфликтует с радио
+  // мультивотч только в SINGLE — при активном сканировании он конфликтует с
+  // радио
   if (scan.mode == SCAN_MODE_SINGLE)
     RADIO_UpdateMultiwatch(gRadioState);
 
