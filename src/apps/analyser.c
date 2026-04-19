@@ -14,6 +14,7 @@
 #include "../ui/graphics.h"
 #include "../ui/spectrum.h"
 #include "../ui/statusline.h"
+#include "../ui/toast.h"
 #include "apps.h"
 #include <stdbool.h>
 #include <string.h>
@@ -394,15 +395,8 @@ static void wfSetEnabled(bool on) {
   gRedrawScreen = true;
 }
 
-// Bayer 4x4 — 16 уровней "серого" на монохромном LCD.
-// Порог привязан к экранным координатам (x,y), чтобы паттерн не "плыл"
-// при прокрутке waterfall.
-static const uint8_t bayer4[4][4] = {
-    {0, 8, 2, 10},
-    {12, 4, 14, 6},
-    {3, 11, 1, 9},
-    {15, 7, 13, 5},
-};
+// 2x2 dither → 4 градации + выкл. Порог привязан к rowIdx (индекс данных),
+// чтобы паттерн прокручивался вместе с waterfall и не мерцал.
 static const uint8_t bayer2[2][2] = {
     {0, 2},
     {3, 1},
@@ -411,7 +405,6 @@ static const uint8_t bayer2[2][2] = {
 // Рендер: row=0 — текущая (частично заполненная), вниз — старшие.
 // Сырой rssi в буфере нормализуется в 0..255 по vMin/vMax — при правке
 // dBm-шкалы весь waterfall сразу переэкспонируется.
-
 static void wfRender(VMinMax v) {
   if (!waterfallOn)
     return;
@@ -443,39 +436,6 @@ static void wfRender(VMinMax v) {
     }
   }
 }
-/* static void wfRender(VMinMax v) {
-  if (!waterfallOn)
-    return;
-  int32_t span = (int32_t)v.vMax - (int32_t)v.vMin;
-  if (span <= 0)
-    return;
-
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H + WF_GAP;
-  uint8_t rows = wfFilled + 1;
-  if (rows > WF_H)
-    rows = WF_H;
-
-  for (uint8_t r = 0; r < rows; r++) {
-    uint8_t rowIdx = (wfHead + WF_H - r) % WF_H;
-    uint8_t y = y0 + r;
-    uint8_t bayerRow = y & 3;
-    const uint8_t *line = wfBuf[rowIdx];
-    for (uint8_t x = 0; x < LCD_WIDTH; x++) {
-      uint8_t val = line[x];
-      if (val == 0)
-        continue; // нет измерения в этом пикселе
-      int32_t norm = ((int32_t)val - (int32_t)v.vMin) * 255 / span;
-      if (norm <= 0)
-        continue;
-      if (norm > 255)
-        norm = 255;
-      uint8_t thr = bayer4[bayerRow][x & 3] * 16 + 8; // 8,24,...,248
-      if ((uint8_t)norm > thr) {
-        PutPixel(x, y, 1);
-      }
-    }
-  }
-} */
 
 // ── dBm tuner helpers ──────────────────────────────────────────────────────
 
@@ -521,6 +481,122 @@ void ANALYSER_UpdateSave(void) {
   aSettings.mode = (uint8_t)analyserMode;
   analyserSettingsSave();
   settingsDirty = false;
+}
+
+// ── Auto-scale dBm ─────────────────────────────────────────────────────────
+// Двойной тап KEY_6: подогнать dBm-шкалу под min/max последнего свипа.
+
+#define AUTOSCALE_MARGIN_DB 5
+#define KEY6_DOUBLE_TAP_MS 300
+
+static uint32_t key6PendingSingle; // время RELEASED первого тапа
+
+static void autoScaleDbm(void) {
+  uint16_t rMin = 0xFFFF;
+  uint16_t rMax = 0;
+  for (uint8_t x = 0; x < LCD_WIDTH; x++) {
+    uint16_t r = SP_GetPointRSSI(x);
+    if (r == 0)
+      continue;
+    if (r < rMin)
+      rMin = r;
+    if (r > rMax)
+      rMax = r;
+  }
+  if (rMin == 0xFFFF || rMax == 0) {
+    TOAST_Push("No data");
+    return;
+  }
+
+  int16_t dbMin = Rssi2DBm(rMin) - AUTOSCALE_MARGIN_DB;
+  int16_t dbMax = Rssi2DBm(rMax) + AUTOSCALE_MARGIN_DB;
+  applyDbmBounds(dbMin, dbMax, true);
+  TOAST_Push("Scale %d..%d", dbMin, dbMax);
+}
+
+// ── Auto-squelch ───────────────────────────────────────────────────────────
+// Калибровка порогов по N свипам пустого эфира. Усреднение → margin.
+// Запускается из sqTuner (KEY_5), сохраняется в VHF/UHF preset под
+// текущий squelch level.
+
+#define AUTO_SQ_SWEEPS 3
+#define AUTO_SQ_RSSI_MARGIN 8
+#define AUTO_SQ_NOISE_MARGIN 8
+#define AUTO_SQ_GLITCH_MARGIN 10
+
+static bool autoSqActive;
+static uint8_t autoSqSweepCnt;
+static uint32_t autoSqRssiSum;
+static uint32_t autoSqNoiseSum;
+static uint32_t autoSqGlitchSum;
+static uint32_t autoSqSamples;
+
+static void autoSqStart(void) {
+  if (still) {
+    TOAST_Push("AutoSQL: scan only");
+    return;
+  }
+  autoSqActive = true;
+  autoSqSweepCnt = 0;
+  autoSqRssiSum = 0;
+  autoSqNoiseSum = 0;
+  autoSqGlitchSum = 0;
+  autoSqSamples = 0;
+  TOAST_Push("AutoSQL: calibrating");
+}
+
+static void autoSqAbort(void) {
+  if (!autoSqActive)
+    return;
+  autoSqActive = false;
+  TOAST_Push("AutoSQL: aborted");
+}
+
+// Вызывать в measure() при каждом замере
+static void autoSqSample(void) {
+  if (!autoSqActive)
+    return;
+  if (still) {
+    autoSqAbort();
+    return;
+  }
+  autoSqRssiSum += msm->rssi;
+  autoSqNoiseSum += msm->noise;
+  autoSqGlitchSum += msm->glitch;
+  autoSqSamples++;
+}
+
+// Вызывать на конце каждого свипа
+static void autoSqOnSweep(void) {
+  if (!autoSqActive)
+    return;
+  if (++autoSqSweepCnt < AUTO_SQ_SWEEPS)
+    return;
+  autoSqActive = false;
+
+  if (!autoSqSamples) {
+    TOAST_Push("AutoSQL: no data");
+    return;
+  }
+
+  uint16_t avgR = autoSqRssiSum / autoSqSamples;
+  uint16_t avgN = autoSqNoiseSum / autoSqSamples;
+  uint16_t avgG = autoSqGlitchSum / autoSqSamples;
+
+  SquelchPreset p;
+  uint32_t ro = (uint32_t)avgR + AUTO_SQ_RSSI_MARGIN;
+  p.ro = (ro > 255) ? 255 : (uint8_t)ro;
+  p.no = (avgN > AUTO_SQ_NOISE_MARGIN) ? (uint8_t)(avgN - AUTO_SQ_NOISE_MARGIN)
+                                       : 0;
+  p.go = (avgG > AUTO_SQ_GLITCH_MARGIN)
+             ? (uint8_t)(avgG - AUTO_SQ_GLITCH_MARGIN)
+             : 0;
+
+  sqApplyThresholds(p);
+  SQ_SavePreset(ctx->frequency >= SETTINGS_GetFilterBound() ? "/uhf.sq"
+                                                            : "/vhf.sq",
+                sqEditLevel, &p);
+  TOAST_Push("SQL R%u N%u G%u", p.ro, p.no, p.go);
 }
 
 // ── Range helpers ──────────────────────────────────────────────────────────
@@ -629,6 +705,9 @@ static bool sqTunerKey(KEY_Code_t key, Key_State_t state) {
   case KEY_4:
   case KEY_6:
     setDelayUs(adjustDelay(key == KEY_4 ? 1 : -1));
+    return true;
+  case KEY_5:
+    autoSqStart();
     return true;
   case KEY_0:
     sqStp = (sqStp >= 100) ? 1 : sqStp * 10;
@@ -798,10 +877,20 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
       showDbmTuner = !showDbmTuner;
       if (showDbmTuner)
         showSqTuner = false;
+      key6PendingSingle = 0;
       return true;
     }
     if (state == KEY_RELEASED) {
-      lockToPeak();
+      uint32_t now = Now();
+      if (key6PendingSingle &&
+          (now - key6PendingSingle) < KEY6_DOUBLE_TAP_MS) {
+        // Второй тап → autoscale
+        autoScaleDbm();
+        key6PendingSingle = 0;
+      } else {
+        // Первый тап — откладываем lockToPeak до истечения double-tap окна
+        key6PendingSingle = now ? now : 1;
+      }
     }
     return true;
 
@@ -997,6 +1086,7 @@ static void measure(void) {
     msm->open = true;
   }
   LOOT_Update(msm);
+  autoSqSample();
 }
 
 static void updateListening(void) {
@@ -1043,6 +1133,7 @@ static void updateScan(void) {
 
   if (msm->f > range.end) {
     wfOnSweepEnd();
+    autoSqOnSweep();
     if (analyserMode == MODE_PEAKS || analyserMode == MODE_SCAN_LISTEN) {
       updatePeaks();
       updateMarkersFromPeaks();
@@ -1056,6 +1147,13 @@ static void updateScan(void) {
 void ANALYSER_update(void) {
   applySquelchPreset();
   ANALYSER_UpdateSave();
+
+  // Deferred single-tap KEY_6 → lockToPeak, если второй тап не пришёл
+  if (key6PendingSingle &&
+      (Now() - key6PendingSingle) >= KEY6_DOUBLE_TAP_MS) {
+    key6PendingSingle = 0;
+    lockToPeak();
+  }
 
   bool shouldListen = still || (analyserMode == MODE_SCAN_LISTEN);
 
