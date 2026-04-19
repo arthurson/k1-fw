@@ -403,11 +403,47 @@ static const uint8_t bayer4[4][4] = {
     {3, 11, 1, 9},
     {15, 7, 13, 5},
 };
+static const uint8_t bayer2[2][2] = {
+    {0, 2},
+    {3, 1},
+};
 
 // Рендер: row=0 — текущая (частично заполненная), вниз — старшие.
 // Сырой rssi в буфере нормализуется в 0..255 по vMin/vMax — при правке
 // dBm-шкалы весь waterfall сразу переэкспонируется.
+
 static void wfRender(VMinMax v) {
+  if (!waterfallOn)
+    return;
+  int32_t span = (int32_t)v.vMax - (int32_t)v.vMin;
+  if (span <= 0)
+    return;
+
+  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H + WF_GAP;
+  uint8_t rows = wfFilled + 1;
+  if (rows > WF_H)
+    rows = WF_H;
+
+  for (uint8_t r = 0; r < rows; r++) {
+    uint8_t rowIdx = (wfHead + WF_H - r) % WF_H;
+    uint8_t y = y0 + r;
+    uint8_t by = rowIdx & 1;
+    const uint8_t *line = wfBuf[rowIdx];
+    for (uint8_t x = 0; x < LCD_WIDTH; x++) {
+      uint8_t val = line[x];
+      if (val == 0)
+        continue;
+      int32_t norm = ((int32_t)val - (int32_t)v.vMin) * 255 / span;
+      if (norm <= 0)
+        continue;
+      uint8_t level = (norm >= 255) ? 4 : (uint8_t)(norm * 5 / 256);
+      if (level > bayer2[by][x & 1]) {
+        PutPixel(x, y, 1);
+      }
+    }
+  }
+}
+/* static void wfRender(VMinMax v) {
   if (!waterfallOn)
     return;
   int32_t span = (int32_t)v.vMax - (int32_t)v.vMin;
@@ -439,7 +475,7 @@ static void wfRender(VMinMax v) {
       }
     }
   }
-}
+} */
 
 // ── dBm tuner helpers ──────────────────────────────────────────────────────
 
