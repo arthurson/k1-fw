@@ -114,6 +114,7 @@ static uint8_t wfBuf[WF_H][LCD_WIDTH]; // [row][x] = rssi clamped to 0..255
 static uint8_t wfHead;                 // текущая (пишущаяся) строка
 static uint8_t
     wfFilled; // кол-во полностью заполненных старых строк (0..WF_H-1)
+static uint8_t wfPrevXc; // trailing центр предыдущего бина (как spPrevXc)
 
 // Squelch tuner
 static SQL sq;
@@ -202,17 +203,58 @@ static void wfReset(void) {
   memset(wfBuf, 0, sizeof(wfBuf));
   wfHead = 0;
   wfFilled = 0;
+  wfPrevXc = 0;
 }
 
-// Пишем точку текущего измерения в текущую строку waterfall
+// Пишем измерение в текущую строку waterfall.
+// Бар на частоте f занимает диапазон [ixs, ixe] — SP_F2X возвращает ЦЕНТР,
+// границы считаются как полпути до соседних центров (как в SP_AddPoint).
+// Внутри диапазона берём max, чтобы повторные измерения не затирали пик.
 static void wfOnMeasure(void) {
   if (!waterfallOn)
     return;
-  uint8_t x = SP_F2X(msm->f);
-  if (x == 0xFF)
+
+  uint32_t f = msm->f;
+  uint8_t xc = SP_F2X(f);
+  if (xc == 0xFF)
     return;
+
+  uint32_t stepHz = StepFrequencyTable[range.step];
+  uint8_t next_xc =
+      (f + stepHz > range.end) ? (LCD_WIDTH - 1) : SP_F2X(f + stepHz);
+
+  int16_t ixs, ixe;
+  if (f == range.start) {
+    ixs = 0;
+    ixe = xc + ((int16_t)next_xc - xc) / 2;
+  } else if (f + stepHz > range.end) {
+    ixs = wfPrevXc + ((int16_t)xc - wfPrevXc) / 2;
+    ixe = LCD_WIDTH - 1;
+  } else {
+    ixs = wfPrevXc + ((int16_t)xc - wfPrevXc) / 2;
+    ixe = xc + ((int16_t)next_xc - xc) / 2 - 1;
+  }
+
+  if (ixs > ixe) {
+    int16_t t = ixs;
+    ixs = ixe;
+    ixe = t;
+  }
+  if (ixs < 0)
+    ixs = 0;
+  if (ixe > LCD_WIDTH - 1)
+    ixe = LCD_WIDTH - 1;
+
   uint16_t r = msm->rssi;
-  wfBuf[wfHead][x] = (r > 255) ? 255 : (uint8_t)r;
+  uint8_t rByte = (r > 255) ? 255 : (uint8_t)r;
+
+  uint8_t *row = wfBuf[wfHead];
+  for (uint8_t x = (uint8_t)ixs; x <= (uint8_t)ixe; x++) {
+    if (rByte > row[x])
+      row[x] = rByte;
+  }
+
+  wfPrevXc = xc;
 }
 
 // Свип завершён — сдвигаем голову, обнуляем новую строку
@@ -223,6 +265,7 @@ static void wfOnSweepEnd(void) {
     wfFilled++;
   wfHead = (wfHead + 1) % WF_H;
   memset(wfBuf[wfHead], 0, LCD_WIDTH);
+  wfPrevXc = 0;
 }
 
 static void wfSetEnabled(bool on) {
@@ -236,14 +279,27 @@ static void wfSetEnabled(bool on) {
   gRedrawScreen = true;
 }
 
-// Рендер: row=0 — текущая (частично заполненная), вниз — старшие
+// Bayer 4x4 — 16 уровней "серого" на монохромном LCD.
+// Порог привязан к экранным координатам (x,y), чтобы паттерн не "плыл"
+// при прокрутке waterfall.
+static const uint8_t bayer4[4][4] = {
+    { 0,  8,  2, 10},
+    {12,  4, 14,  6},
+    { 3, 11,  1,  9},
+    {15,  7, 13,  5},
+};
+
+// Рендер: row=0 — текущая (частично заполненная), вниз — старшие.
+// Сырой rssi в буфере нормализуется в 0..255 по vMin/vMax — при правке
+// dBm-шкалы весь waterfall сразу переэкспонируется.
 static void wfRender(VMinMax v) {
   if (!waterfallOn)
     return;
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H + WF_GAP;
-  uint16_t thr16 = (v.vMin + v.vMax) / 2;
-  uint8_t thr = (thr16 > 255) ? 255 : (uint8_t)thr16;
+  int32_t span = (int32_t)v.vMax - (int32_t)v.vMin;
+  if (span <= 0)
+    return;
 
+  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H + WF_GAP;
   uint8_t rows = wfFilled + 1;
   if (rows > WF_H)
     rows = WF_H;
@@ -251,9 +307,19 @@ static void wfRender(VMinMax v) {
   for (uint8_t r = 0; r < rows; r++) {
     uint8_t rowIdx = (wfHead + WF_H - r) % WF_H;
     uint8_t y = y0 + r;
+    uint8_t bayerRow = y & 3;
     const uint8_t *line = wfBuf[rowIdx];
     for (uint8_t x = 0; x < LCD_WIDTH; x++) {
-      if (line[x] > thr) {
+      uint8_t val = line[x];
+      if (val == 0)
+        continue; // нет измерения в этом пикселе
+      int32_t norm = ((int32_t)val - (int32_t)v.vMin) * 255 / span;
+      if (norm <= 0)
+        continue;
+      if (norm > 255)
+        norm = 255;
+      uint8_t thr = bayer4[bayerRow][x & 3] * 16 + 8; // 8,24,...,248
+      if ((uint8_t)norm > thr) {
         PutPixel(x, y, 1);
       }
     }
@@ -886,12 +952,22 @@ static void renderSqTuner(void) {
 }
 
 // Оверлей dBm tuner: значения max/min с подсказкой клавиш в скобках.
-// Рисуется по центру на месте UI_DrawLoot.
+// Рисуется по центру на месте UI_DrawLoot, поверх любых баров —
+// поэтому сначала очищаем область и обводим рамкой для читаемости.
 static void renderDbmTuner(void) {
   int16_t dbMin = ANALYSERMENU_GetDbmMin();
   int16_t dbMax = ANALYSERMENU_GetDbmMax();
-  PrintSmallEx(LCD_XCENTER, 14, POS_C, C_FILL, "max=%d (3/9)", dbMax);
-  PrintSmallEx(LCD_XCENTER, 14 + 6, POS_C, C_FILL, "min=%d (2/8)", dbMin);
+
+  const uint8_t bw = 76;
+  const uint8_t bh = 15;
+  const uint8_t bx = LCD_XCENTER - bw / 2;
+  const uint8_t by = 11;
+
+  FillRect(bx, by, bw, bh, C_CLEAR);
+  DrawRect(bx, by, bw, bh, C_FILL);
+
+  PrintSmallEx(LCD_XCENTER, by + 5,  POS_C, C_FILL, "max=%d (3/9)", dbMax);
+  PrintSmallEx(LCD_XCENTER, by + 11, POS_C, C_FILL, "min=%d (2/8)", dbMin);
 }
 
 static void renderPeakMarker(VMinMax v) {
