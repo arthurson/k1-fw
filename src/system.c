@@ -46,6 +46,7 @@ static uint32_t secondTimer;
 static uint32_t toastTimer;
 static uint32_t backlightTimer;
 static uint32_t appsKeyboardTimer;
+static uint32_t intPollTimer;
 
 static void appRender(void) {
   // Подавляем все обновления дисплея (FC режим при открытом шумодаве)
@@ -537,7 +538,12 @@ void SYS_Main(void) {
     uint32_t now = Now();  // Read once per loop — fewer TIM2 accesses
 
     SETTINGS_UpdateSave();
-    checkInt();
+    // BK4819 IRQ polling: чтение REG_0C — SPI-транзакция, раньше шла каждую мс
+    // впустую. 3 мс не влияют на DTMF/FSK/STE-tail (события идут медленнее).
+    if (now - intPollTimer >= 3) {
+      checkInt();
+      intPollTimer = now;
+    }
     SCAN_Check();
 
     if (dtmfIdx > 0 && now - lastDtmf > 400) {
@@ -575,7 +581,10 @@ void SYS_Main(void) {
       secondTimer = now;
     }
 
-    if (now - gLastRender >= 500) {
+    // Watchdog-redraw: страхует случай, когда dirty-флаг не был поднят.
+    // STATUSLINE_update (раз в сек) сам ставит gRedrawScreen при изменениях,
+    // поэтому здесь достаточно редкого тика.
+    if (now - gLastRender >= 5000) {
       gRedrawScreen = true;
     }
 

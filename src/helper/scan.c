@@ -49,6 +49,34 @@ static ScanContext scan = {
 static SCMD_Context cmdctx;
 static uint32_t sqReopenAt = 0;
 
+// Кэш BK4819 REG_30. Свип переключает PLL_VCO много раз в секунду — два SPI
+// read'а на step были чистым оверхедом. Инвалидируется в точках, где REG_30
+// может быть изменён снаружи модуля (TX, инициализация).
+static uint16_t reg30Cache;
+static bool reg30CacheValid;
+
+static void Reg30_Invalidate(void) { reg30CacheValid = false; }
+
+static uint16_t Reg30_Get(void) {
+  if (!reg30CacheValid) {
+    reg30Cache = BK4819_ReadRegister(BK4819_REG_30);
+    reg30CacheValid = true;
+  }
+  return reg30Cache;
+}
+
+// Устанавливает/сбрасывает бит PLL_VCO. Запись в BK4819 пропускается, если
+// состояние уже нужное.
+static void Reg30_SetPllVco(bool on) {
+  uint16_t cur = Reg30_Get();
+  uint16_t nv = on ? (cur | BK4819_REG_30_ENABLE_PLL_VCO)
+                   : (cur & ~BK4819_REG_30_ENABLE_PLL_VCO);
+  if (nv != cur) {
+    BK4819_WriteRegister(BK4819_REG_30, nv);
+    reg30Cache = nv;
+  }
+}
+
 const char *SCAN_MODE_NAMES[] = {
     [SCAN_MODE_NONE] = "None",         [SCAN_MODE_SINGLE] = "VFO",
     [SCAN_MODE_FREQUENCY] = "Scan",    [SCAN_MODE_CHANNEL] = "CH Scan",
@@ -303,10 +331,8 @@ static void HandleStateTuning(void) {
 
   RADIO_MuteAudioNow(gRadioState);
 
-  // включаем VCO перед перестройкой (мог быть выключен после прошлого замера)
-  uint16_t reg30 = BK4819_ReadRegister(BK4819_REG_30);
-  if (!(reg30 & BK4819_REG_30_ENABLE_PLL_VCO))
-    BK4819_WriteRegister(BK4819_REG_30, reg30 | BK4819_REG_30_ENABLE_PLL_VCO);
+  // Включаем VCO перед перестройкой (мог быть выключен после прошлого замера)
+  Reg30_SetPllVco(true);
 
   RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
   RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
@@ -319,10 +345,9 @@ static void HandleStateTuning(void) {
   scan.measurement.glitch = BK4819_GetGlitch();
   scan.measurement.f = scan.currentF;
 
-  // глушим VCO сразу после замера — RSSI-детектор видит тишину, размазывания
+  // Глушим VCO сразу после замера — RSSI-детектор видит тишину, размазывания
   // нет
-  BK4819_WriteRegister(BK4819_REG_30, BK4819_ReadRegister(BK4819_REG_30) &
-                                          ~BK4819_REG_30_ENABLE_PLL_VCO);
+  Reg30_SetPllVco(false);
 
   scan.scanCycles++;
   UpdateCPS();
@@ -335,10 +360,9 @@ static void HandleStateTuning(void) {
 
   if (AdaptiveSq_Check(scan.measurement.rssi, scan.measurement.noise,
                        scan.measurement.glitch)) {
-    // включаем VCO обратно — CHECKING нужен живой приёмник для аппаратного
+    // Включаем VCO обратно — CHECKING нужен живой приёмник для аппаратного
     // шумодава
-    BK4819_WriteRegister(BK4819_REG_30, BK4819_ReadRegister(BK4819_REG_30) |
-                                            BK4819_REG_30_ENABLE_PLL_VCO);
+    Reg30_SetPllVco(true);
     ChangeState(SCAN_STATE_CHECKING);
   } else {
     scan.measurement.open = false;
@@ -476,6 +500,7 @@ void SCAN_SetMode(ScanMode mode) {
   scan.mode = mode;
   scan.scanCycles = 0;
   ChangeState(SCAN_STATE_IDLE);
+  Reg30_Invalidate();
 
   switch (mode) {
   case SCAN_MODE_SINGLE:
@@ -501,6 +526,7 @@ void SCAN_Init(void) {
   scan.currentCps = 0;
   scan.radioTimer = Now();
   AdapFloor_Reset();
+  Reg30_Invalidate();
 
   ApplyBandSettings();
   vfo->is_open = false;
