@@ -535,7 +535,7 @@ void SYS_Main(void) {
   LogC(LOG_C_BRIGHT_WHITE, "System initialized");
 
   for (;;) {
-    uint32_t now = Now();  // Read once per loop — fewer TIM2 accesses
+    uint32_t now = Now(); // Read once per loop — fewer TIM2 accesses
 
     SETTINGS_UpdateSave();
     // BK4819 IRQ polling: чтение REG_0C — SPI-транзакция, раньше шла каждую мс
@@ -584,7 +584,7 @@ void SYS_Main(void) {
     // Watchdog-redraw: страхует случай, когда dirty-флаг не был поднят.
     // STATUSLINE_update (раз в сек) сам ставит gRedrawScreen при изменениях,
     // поэтому здесь достаточно редкого тика.
-    if (now - gLastRender >= 5000) {
+    if (now - gLastRender >= 1000) {
       gRedrawScreen = true;
     }
 
