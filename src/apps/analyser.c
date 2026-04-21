@@ -271,6 +271,12 @@ static void updateMarkersFromPeaks(void) {
 static void cycleMode(void) {
   analyserMode = (analyserMode + 1) % MODE_COUNT;
   peaksFound = 0;
+  // Auto-маркеры обнулим — в новом режиме они пересчитаются или
+  // вовсе не актуальны (см. renderUserMarker). Manual остаются.
+  if (!markerA.manual)
+    markerA.f = 0;
+  if (!markerB.manual)
+    markerB.f = 0;
   markSettingsDirty();
   refreshSpectrumH();
   gRedrawScreen = true;
@@ -288,6 +294,9 @@ static void onMarkerFreq(uint32_t fs, uint32_t fe) {
   } else if (!markerB.manual) {
     markerB.f = fs;
     markerB.manual = true;
+  } else {
+    // Оба слота заняты — даём пользователю обратную связь
+    TOAST_Push("Markers full, long KEY5 to reset");
   }
 }
 
@@ -601,6 +610,20 @@ static void autoSqOnSweep(void) {
 
 // ── Range helpers ──────────────────────────────────────────────────────────
 
+// Всё, что обнуляется при смене диапазона: пики, auto-маркеры, waterfall,
+// состояние settle и debounced save. Manual-маркеры сохраняются — они
+// привязаны к абсолютной частоте, а не к позиции на экране.
+static void onRangeChanged(void) {
+  peaksFound = 0;
+  if (!markerA.manual)
+    markerA.f = 0;
+  if (!markerB.manual)
+    markerB.f = 0;
+  wfReset();
+  scanAwaitingSettle = false;
+  markSettingsDirty();
+}
+
 static void setRange(uint32_t fs, uint32_t fe) {
   range.step = RADIO_GetParam(ctx, PARAM_STEP);
   range.start = fs;
@@ -609,9 +632,15 @@ static void setRange(uint32_t fs, uint32_t fe) {
   SP_Init(&range);
   BANDS_RangeClear();
   BANDS_RangePush(range);
-  wfReset();
-  scanAwaitingSettle = false;
-  markSettingsDirty();
+  onRangeChanged();
+}
+
+// Выход из still: сбрасывает listen и monitor, чтобы они не утекали в SCAN
+static void exitStill(void) {
+  still = false;
+  listen = false;
+  gMonitorMode = false;
+  refreshSpectrumH();
 }
 
 static void lockToPeak(void) {
@@ -627,23 +656,31 @@ static void lockToPeak(void) {
 
 // ── Mode indicator ─────────────────────────────────────────────────────────
 
-static char getModeChar(void) {
+// Базовый режим — двухбуквенный ярлык (SC/PK/SL/HLD/LSN)
+static const char *getModeStr(void) {
+  if (listen)
+    return "LSN";
+  if (still)
+    return "HLD";
+  switch (analyserMode) {
+  case MODE_PEAKS:
+    return "PK";
+  case MODE_SCAN_LISTEN:
+    return "SL";
+  default:
+    return "SC";
+  }
+}
+
+// Активный оверлей (Q/D/A) — рисуется отдельно от режима, с инверсией
+static char getOverlayChar(void) {
   if (showSqTuner)
     return 'Q';
   if (showDbmTuner)
     return 'D';
-  if (listen)
-    return 'L';
-  if (still)
-    return 'T';
-  switch (analyserMode) {
-  case MODE_PEAKS:
-    return 'P';
-  case MODE_SCAN_LISTEN:
-    return 'H';
-  default:
-    return 'S';
-  }
+  if (autoSqActive)
+    return 'A';
+  return 0;
 }
 
 // ── Key handlers ───────────────────────────────────────────────────────────
@@ -778,17 +815,15 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
 
     if (!moved) {
       bool up = (key == KEY_UP) ^ gSettings.invertButtons;
+      uint32_t oldStart = range.start;
+
       if (up) {
-        // Правый край → сдвигаем вправо
         range.start += step;
         range.end += step;
-        SP_ShiftGraph(-1);
       } else {
-        // Левый край → сдвигаем влево с защитой от underflow
         if (range.start >= step) {
           range.start -= step;
           range.end -= step;
-          SP_ShiftGraph(1);
         } else {
           range.start = 0;
           range.end = StepFrequencyTable[range.step] * LCD_WIDTH;
@@ -798,13 +833,24 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
         range.end = BK4819_F_MAX;
         range.start = range.end - StepFrequencyTable[range.step] * LCD_WIDTH;
       }
+
+      // Инкрементальный shift применим только если сдвинулись ровно на ±step.
+      // При clamp'е к BK4819_F_MAX / 0 содержимое колонок не соответствует
+      // новым X — нужен полный SP_Init.
+      int32_t delta = (int32_t)range.start - (int32_t)oldStart;
+      if (delta == (int32_t)step) {
+        SP_ShiftGraph(-1);
+      } else if (delta == -(int32_t)step) {
+        SP_ShiftGraph(1);
+      } else {
+        SP_Init(&range);
+      }
+
       BANDS_RangePeek()->start = range.start;
       BANDS_RangePeek()->end = range.end;
       SP_Begin();
-      wfReset();
-      scanAwaitingSettle = false;
+      onRangeChanged();
       gRedrawScreen = true;
-      markSettingsDirty();
     }
     return true;
   }
@@ -822,9 +868,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     msm->f = range.start;
     SP_Init(&range);
     CUR_Reset();
-    wfReset();
-    scanAwaitingSettle = false;
-    markSettingsDirty();
+    onRangeChanged();
     return true;
   }
 
@@ -835,9 +879,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     msm->f = range.start;
     SP_Init(&range);
     CUR_Reset();
-    wfReset();
-    scanAwaitingSettle = false;
-    markSettingsDirty();
+    onRangeChanged();
     return true;
 
   case KEY_3:
@@ -859,16 +901,18 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
         refreshSpectrumH();
       }
     } else if (state == KEY_RELEASED) {
-      still = !still;
-      if (still) {
+      if (!still) {
+        // вход в still
+        still = true;
         listen = true;
         targetF = msm->f;
         RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
         RADIO_ApplySettings(ctx);
+        refreshSpectrumH();
       } else {
-        listen = false; // выход из still — явно выключаем listen
+        // выход: сбросить still, listen и monitor
+        exitStill();
       }
-      refreshSpectrumH();
     }
     return true;
 
@@ -899,7 +943,9 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
       LOOT_WhitelistLast();
       return true;
     }
-    LOOT_BlacklistLast();
+    if (state == KEY_RELEASED) {
+      LOOT_BlacklistLast();
+    }
     return true;
   case KEY_SIDE2:
     if (state == KEY_LONG_PRESSED) {
@@ -942,8 +988,7 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
         return true;
       }
       if (still) {
-        still = false;
-        refreshSpectrumH();
+        exitStill();
         return true;
       }
       if (showSqTuner) {
@@ -1124,7 +1169,6 @@ static void updateScan(void) {
     SP_AddPoint(msm);
     wfOnMeasure();
   }
-  LOOT_Update(msm);
 
   if (still)
     return;
@@ -1199,13 +1243,17 @@ static void renderBottomFreq(void) {
   printFreqKHz(1, LCD_HEIGHT - 2, POS_L, leftF);
   printFreqKHz(LCD_WIDTH - 1, LCD_HEIGHT - 2, POS_R, rightF);
 
-  char buf[16];
-  // Центр: только ΔF когда оба маркера стоят
   if (markerA.f && markerB.f) {
+    // ΔF между маркерами
     uint32_t dF = (markerB.f > markerA.f) ? (markerB.f - markerA.f)
                                           : (markerA.f - markerB.f);
+    char buf[16];
     mhzToS(buf, dF);
     PrintSmallEx(LCD_XCENTER, LCD_HEIGHT - 2, POS_C, C_FILL, "d=%s", buf);
+  } else {
+    // Центр-частота диапазона (деление до суммы — защита от переполнения)
+    uint32_t cF = leftF / 2 + rightF / 2;
+    printFreqKHz(LCD_XCENTER, LCD_HEIGHT - 2, POS_C, cF);
   }
 }
 
@@ -1213,32 +1261,40 @@ static void renderSqTuner(void) {
   const char *labels[] = {"R", "N", "G"};
   uint16_t values[] = {sq.ro, sq.no, sq.go};
 
+  // Заголовок: уровень и шаг одной строкой
+  PrintSmallEx(LCD_WIDTH - 1, 12, POS_R, C_FILL, "SQL L%u s%u", sqEditLevel,
+               sqStp);
+
   for (uint8_t i = 0; i < 3; i++) {
-    char sel = (i == sqEditParam) ? '<' : ' ';
-    PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * i, POS_R, C_FILL, "%s %3u%c",
-                 labels[i], values[i], sel);
+    uint8_t y = 18 + 6 * i;
+    if (i == sqEditParam) {
+      FillRect(LCD_WIDTH - 30, y - 5, 30, 6, C_FILL);
+      PrintSmallEx(LCD_WIDTH - 2, y, POS_R, C_CLEAR, "%s %3u", labels[i],
+                   values[i]);
+    } else {
+      PrintSmallEx(LCD_WIDTH - 2, y, POS_R, C_FILL, "%s %3u", labels[i],
+                   values[i]);
+    }
   }
-  PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 3, POS_R, C_FILL, "s=%u", sqStp);
-  PrintSmallEx(LCD_WIDTH - 1, 18 + 6 * 4, POS_R, C_FILL, "L=%u", sqEditLevel);
 }
 
-// Оверлей dBm tuner: значения max/min с подсказкой клавиш в скобках.
-// Рисуется по центру на месте UI_DrawLoot, поверх любых баров —
-// поэтому сначала очищаем область и обводим рамкой для читаемости.
+// Оверлей dBm tuner: значения max/min + строка подсказки клавиш снизу.
+// Очищаем фон и обводим рамкой для читаемости поверх любых баров.
 static void renderDbmTuner(void) {
   int16_t dbMin = ANALYSERMENU_GetDbmMin();
   int16_t dbMax = ANALYSERMENU_GetDbmMax();
 
-  const uint8_t bw = 76;
-  const uint8_t bh = 15;
+  const uint8_t bw = 62;
+  const uint8_t bh = 21;
   const uint8_t bx = LCD_XCENTER - bw / 2;
-  const uint8_t by = 11;
+  const uint8_t by = 10;
 
   FillRect(bx, by, bw, bh, C_CLEAR);
   DrawRect(bx, by, bw, bh, C_FILL);
 
-  PrintSmallEx(LCD_XCENTER, by + 5, POS_C, C_FILL, "max=%d (3/9)", dbMax);
-  PrintSmallEx(LCD_XCENTER, by + 11, POS_C, C_FILL, "min=%d (2/8)", dbMin);
+  PrintSmallEx(LCD_XCENTER, by + 5, POS_C, C_FILL, "max %4d", dbMax);
+  PrintSmallEx(LCD_XCENTER, by + 11, POS_C, C_FILL, "min %4d", dbMin);
+  PrintSmallEx(LCD_XCENTER, by + 18, POS_C, C_FILL, "2/8 min 3/9 max");
 }
 
 static void renderPeakMarker(VMinMax v) {
@@ -1252,24 +1308,8 @@ static void renderPeakMarker(VMinMax v) {
   PrintSmallEx(0, 12 + 6 + 6, POS_L, C_FILL, "%ddBm", Rssi2DBm(rssi));
 }
 
-// Таблица пиков под спектром (режим PEAKS).
-// Y-позиции рассчитываются от SPECTRUM_H_SPLIT: 3 строки × 6 пикс в area 20
-// пикс.
-static void renderPeaksTable(void) {
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + WF_GAP;
-  const char labels[PEAKS_N] = {'A', 'B', '3'};
-
-  for (uint8_t i = 0; i < peaksFound && i < PEAKS_N; i++) {
-    uint32_t f = SP_X2F(peaks[i].x);
-    int16_t dbm = Rssi2DBm(peaks[i].rssi);
-    uint16_t n = SP_GetPointNoise(peaks[i].x);
-    uint16_t g = SP_GetPointGlitch(peaks[i].x);
-    PrintSmallEx(0, y0 + 5 + i * 6, POS_L, C_FILL, "%c %u.%03u %3d %3u %3u %3u",
-                 labels[i], f / 100000u, (f / 100u) % 1000u, dbm, peaks[i].rssi,
-                 n, g);
-  }
-}
-// СТАЛО:
+// Таблица маркеров под спектром (режим PEAKS): 2 строки по 6 пикс.
+// Manual-маркер метки выделяется инверсией, auto — обычная буква.
 static void renderMarkersTable(void) {
   uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + WF_GAP;
   const Marker *markers[2] = {&markerA, &markerB};
@@ -1280,16 +1320,22 @@ static void renderMarkersTable(void) {
     if (!m->f)
       continue; // маркер не установлен
 
-    uint8_t x = SP_F2X(m->f);
-    uint16_t rssi = (x != 0xFF) ? SP_GetPointRSSI(x) : 0;
-    uint16_t n = (x != 0xFF) ? SP_GetPointNoise(x) : 0;
-    uint16_t g = (x != 0xFF) ? SP_GetPointGlitch(x) : 0;
+    uint8_t xp = SP_F2X(m->f);
+    uint16_t rssi = (xp != 0xFF) ? SP_GetPointRSSI(xp) : 0;
+    uint16_t n = (xp != 0xFF) ? SP_GetPointNoise(xp) : 0;
+    uint16_t g = (xp != 0xFF) ? SP_GetPointGlitch(xp) : 0;
     int16_t dbm = Rssi2DBm(rssi);
 
-    PrintSmallEx(0, y0 + 5 + i * 6, POS_L, C_FILL,
-                 "%c%c %u.%03u %3d %3u %3u %3u", m->manual ? '*' : ' ',
-                 labels[i], m->f / 100000u, m->f / 100u % 1000u, dbm, rssi, n,
-                 g);
+    uint8_t y = y0 + 5 + i * 6;
+
+    if (m->manual) {
+      FillRect(0, y - 5, 6, 6, C_FILL);
+      PrintSmallEx(1, y, POS_L, C_CLEAR, "%c", labels[i]);
+    } else {
+      PrintSmallEx(1, y, POS_L, C_FILL, "%c", labels[i]);
+    }
+    PrintSmallEx(7, y, POS_L, C_FILL, "%u.%03u %4d %3u %3u %3u",
+                 m->f / 100000u, m->f / 100u % 1000u, dbm, rssi, n, g);
   }
 }
 
@@ -1320,7 +1366,7 @@ static void renderStillInfo(void) {
     PrintSmallEx(LCD_XCENTER, 12 + 6 * 3, POS_C, C_FILL, "MONITOR");
 }
 
-// Стрелка + буква метки возле неё. В manual инвертируется для различия.
+// Стрелка + буква метки возле неё. Manual выделяется инверсией.
 static void renderUserMarker(const Marker *m, char label) {
   if (!m->f)
     return;
@@ -1328,10 +1374,17 @@ static void renderUserMarker(const Marker *m, char label) {
   if (x == 0xFF)
     return;
   SP_RenderArrow(m->f);
+
   uint8_t ly = SPECTRUM_Y + SPECTRUM_H - 1;
-  uint8_t lx = (x + 4 < LCD_WIDTH) ? x + 2 : x - 4;
-  // Manual маркер подчёркиваем префиксом '*', auto — без
-  PrintSmallEx(lx, ly, POS_L, C_FILL, "%s%c", m->manual ? "*" : "", label);
+  uint8_t lx = (x + 6 < LCD_WIDTH) ? x + 2 : x - 5;
+
+  if (m->manual) {
+    FillRect(lx - 1, ly - 5, 5, 6, C_FILL);
+    PrintSmallEx(lx, ly, POS_L, C_CLEAR, "%c", label);
+  } else {
+    FillRect(lx - 1, ly - 5, 5, 6, C_CLEAR);
+    PrintSmallEx(lx, ly, POS_L, C_FILL, "%c", label);
+  }
 }
 
 void ANALYSER_render(void) {
@@ -1343,8 +1396,18 @@ void ANALYSER_render(void) {
   wfRender(v);
   renderBottomFreq();
 
-  // Левый верх спектра: индикатор режима + delay
-  PrintSmallEx(0, 12, POS_L, C_FILL, "%c %uus", getModeChar(), delay);
+  // Левый верх: базовый режим → (опц. оверлей инверсно) → delay.
+  // Оверлей вынесен отдельно, чтобы режим всегда был виден.
+  uint8_t sx = 0;
+  PrintSmallEx(sx, 12, POS_L, C_FILL, "%s", getModeStr());
+  sx += 14;
+  char ov = getOverlayChar();
+  if (ov) {
+    FillRect(sx - 1, 7, 6, 6, C_FILL);
+    PrintSmallEx(sx, 12, POS_L, C_CLEAR, "%c", ov);
+    sx += 7;
+  }
+  PrintSmallEx(sx, 12, POS_L, C_FILL, "%uus", delay);
   PrintSmallEx(LCD_WIDTH - 1, 12, POS_R, C_FILL, "%s",
                RADIO_GetParamValueString(ctx, PARAM_STEP));
 
