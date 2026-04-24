@@ -7,85 +7,11 @@
 #include "driver/hrtime.h"
 #include "driver/st7565.h"
 #include "driver/systick.h"
-#include "external/CMSIS/Device/PY32F071/Include/py32f071xB.h"
-#include "helper/pocsag.h"
 #include "system.h"
 #include "ui/graphics.h"
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
-
-#define PIN_CSN GPIO_MAKE_PIN(GPIOF, LL_GPIO_PIN_9)
-#define PIN_SCL GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_8)
-#define PIN_SDA GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_9)
-#if !defined(HSE_VALUE)
-#define HSE_VALUE 24000000U /*!< Value of the External oscillator in Hz */
-#endif                      /* HSE_VALUE */
-
-#if !defined(HSI_VALUE)
-#define HSI_VALUE 8000000U /*!< Value of the Internal oscillator in Hz*/
-#endif                     /* HSI_VALUE */
-
-#if !defined(LSI_VALUE)
-#define LSI_VALUE 32768U /*!< Value of LSI in Hz*/
-#endif                   /* LSI_VALUE */
-
-#if !defined(LSE_VALUE)
-#define LSE_VALUE 32768U /*!< Value of LSE in Hz*/
-#endif                   /* LSE_VALUE */
-void PrintClockConfiguration(void) {
-  // Получаем текущую информацию о тактировании
-  uint32_t sysclk_source = RCC->CFGR & RCC_CFGR_SWS;
-  uint32_t pll_source = RCC->PLLCFGR & RCC_PLLCFGR_PLLSRC;
-  uint32_t pll_mul =
-      ((RCC->PLLCFGR & RCC_PLLCFGR_PLLMUL) >> RCC_PLLCFGR_PLLMUL_Pos);
-
-  // Определяем источник системной частоты
-  printf("System clock source: ");
-  switch (sysclk_source) {
-  case 0x00:
-    printf("HSI\n");
-    break;
-  case 0x01:
-    printf("HSE\n");
-    break;
-  case 0x02:
-    printf("PLL\n");
-    break;
-  case 0x03:
-    printf("LSI\n");
-    break;
-  default:
-    printf("Unknown\n");
-  }
-
-  // Если используется PLL, показываем его параметры
-  if (sysclk_source == 0x02) {
-    const uint8_t pllMulValue[4] = {2, 3, 2, 2};
-    uint32_t actual_mul = pllMulValue[pll_mul];
-
-    printf("PLL multiplier: %d\n", actual_mul);
-
-    if (pll_source == RCC_PLLCFGR_PLLSRC_HSI) {
-      uint32_t hsifs = (RCC->ICSCR & RCC_ICSCR_HSI_FS) >> RCC_ICSCR_HSI_FS_Pos;
-      uint32_t hsi_freq = HSIFreqTable[hsifs];
-      printf("PLL source: HSI (%d Hz)\n", hsi_freq);
-      printf("Calculated PLL frequency: %d Hz\n", hsi_freq * actual_mul);
-    } else {
-      printf("PLL source: HSE (%d Hz)\n", HSE_VALUE);
-      printf("Calculated PLL frequency: %d Hz\n", HSE_VALUE * actual_mul);
-    }
-  }
-
-  // Показываем текущую частоту ядра
-  printf("SystemCoreClock: %d Hz\n", SystemCoreClock);
-
-  // Проверяем настройки GPIO для SPI
-  printf("SCL GPIO speed: %d\n",
-         LL_GPIO_GetPinSpeed(GPIO_PORT(PIN_SCL), GPIO_PIN_MASK(PIN_SCL)));
-  printf("SDA GPIO speed: %d\n",
-         LL_GPIO_GetPinSpeed(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA)));
-}
 
 void testScan() {
   BK4819_Init();
@@ -160,7 +86,6 @@ int main(void) {
   BACKLIGHT_SetBrightness(2);
 
   // AUDIO_IO_Init(); // Отключено — ADC/DAC DMA создают RF помехи
-  PrintClockConfiguration();
 
   SYS_Main();
 }

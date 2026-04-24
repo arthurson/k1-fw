@@ -1,4 +1,5 @@
 #include "analyser.h"
+#include "../driver/hrtime.h"
 #include "../driver/systick.h"
 #include "../driver/uart.h"
 #include "../helper/analysermenu.h"
@@ -926,8 +927,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     }
     if (state == KEY_RELEASED) {
       uint32_t now = Now();
-      if (key6PendingSingle &&
-          (now - key6PendingSingle) < KEY6_DOUBLE_TAP_MS) {
+      if (key6PendingSingle && (now - key6PendingSingle) < KEY6_DOUBLE_TAP_MS) {
         // Второй тап → autoscale
         autoScaleDbm();
         key6PendingSingle = 0;
@@ -1148,7 +1148,7 @@ static void updateScan(void) {
     RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
     RADIO_SetParam(ctx, PARAM_FREQUENCY, msm->f, false);
     RADIO_ApplySettings(ctx);
-    SYSTICK_DelayUs(delay);
+    HRTIME_DelayUs(delay);
   } else {
     // Медленная ветка: неблокирующее ожидание settle
     if (!scanAwaitingSettle) {
@@ -1193,8 +1193,7 @@ void ANALYSER_update(void) {
   ANALYSER_UpdateSave();
 
   // Deferred single-tap KEY_6 → lockToPeak, если второй тап не пришёл
-  if (key6PendingSingle &&
-      (Now() - key6PendingSingle) >= KEY6_DOUBLE_TAP_MS) {
+  if (key6PendingSingle && (Now() - key6PendingSingle) >= KEY6_DOUBLE_TAP_MS) {
     key6PendingSingle = 0;
     lockToPeak();
   }
@@ -1334,8 +1333,8 @@ static void renderMarkersTable(void) {
     } else {
       PrintSmallEx(1, y, POS_L, C_FILL, "%c", labels[i]);
     }
-    PrintSmallEx(7, y, POS_L, C_FILL, "%u.%03u %4d %3u %3u %3u",
-                 m->f / 100000u, m->f / 100u % 1000u, dbm, rssi, n, g);
+    PrintSmallEx(7, y, POS_L, C_FILL, "%u.%03u %4d %3u %3u %3u", m->f / 100000u,
+                 m->f / 100u % 1000u, dbm, rssi, n, g);
   }
 }
 
