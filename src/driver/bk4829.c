@@ -16,13 +16,7 @@ static bool reg30_cached = false;
 #define SHORT_DELAY() __asm volatile("nop\nnop\nnop\nnop\n")
 
 // 48 NOP @ 48 MHz ≈ 1 мкс
-#define DELAY_1US()                                                            \
-  __asm volatile("nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n"                    \
-                 "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n"                    \
-                 "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n"                    \
-                 "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n"                    \
-                 "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n"                    \
-                 "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n")
+#define DELAY_1US() __asm volatile("nop\nnop\nnop\nnop\nnop\n")
 
 // ============================================================================
 // Constants
