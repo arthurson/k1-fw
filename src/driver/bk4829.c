@@ -10,11 +10,10 @@
 #include <stdint.h>
 
 static uint16_t reg30_cache = 0;
-static bool     reg30_cached = false;
+static bool reg30_cached = false;
 
 // 10 NOP @ 48 MHz ≈ 208 нс — полупериод SCK
-#define SHORT_DELAY()                                                          \
-  __asm volatile("nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n")
+#define SHORT_DELAY() __asm volatile("nop\nnop\nnop\nnop\n")
 
 // 48 NOP @ 48 MHz ≈ 1 мкс
 #define DELAY_1US()                                                            \
@@ -110,11 +109,11 @@ static uint16_t gRegCache_73 = 0xFFFF; // REG_73 AFC
 #define PIN_SCL GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_8)
 #define PIN_SDA GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_9)
 
-static inline void CS_Low(void)   { GPIO_ResetOutputPin(PIN_CSN); }
-static inline void CS_High(void)  { GPIO_SetOutputPin(PIN_CSN); }
-static inline void SCL_Low(void)  { GPIO_ResetOutputPin(PIN_SCL); }
+static inline void CS_Low(void) { GPIO_ResetOutputPin(PIN_CSN); }
+static inline void CS_High(void) { GPIO_SetOutputPin(PIN_CSN); }
+static inline void SCL_Low(void) { GPIO_ResetOutputPin(PIN_SCL); }
 static inline void SCL_High(void) { GPIO_SetOutputPin(PIN_SCL); }
-static inline void SDA_Low(void)  { GPIO_ResetOutputPin(PIN_SDA); }
+static inline void SDA_Low(void) { GPIO_ResetOutputPin(PIN_SDA); }
 static inline void SDA_High(void) { GPIO_SetOutputPin(PIN_SDA); }
 
 static inline void SDA_AsOutput(void) {
@@ -136,26 +135,29 @@ static inline uint16_t scale_frequency(uint16_t freq) {
 }
 
 void BK4819_WriteU8(uint8_t data) {
-  SCL_Low();
   for (int i = 0; i < 8; i++) {
-    if (data & 0x80) SDA_High(); else SDA_Low();
-    SHORT_DELAY();
-    SCL_High();
-    SHORT_DELAY();
     SCL_Low();
+    if (data & 0x80)
+      SDA_High();
+    else
+      SDA_Low();
+    SHORT_DELAY();
+    SCL_High(); // защёлкивание
     SHORT_DELAY();
     data <<= 1;
   }
+  // выходим с SCL=HIGH
 }
 
 void BK4819_WriteU16(uint16_t data) {
-  SCL_Low();
   for (int i = 0; i < 16; i++) {
-    if (data & 0x8000) SDA_High(); else SDA_Low();
+    SCL_Low();
+    if (data & 0x8000)
+      SDA_High();
+    else
+      SDA_Low();
     SHORT_DELAY();
     SCL_High();
-    SHORT_DELAY();
-    SCL_Low();
     SHORT_DELAY();
     data <<= 1;
   }
@@ -164,12 +166,14 @@ void BK4819_WriteU16(uint16_t data) {
 static uint16_t BK4819_ReadU16(void) {
   uint16_t value = 0;
   SDA_AsInput();
-  DELAY_1US();
+  SHORT_DELAY();
+  SCL_Low(); // единственный явный спад → чип выставляет D15
+  DELAY_1US(); // tNXT
   for (int i = 0; i < 16; i++) {
-    SCL_Low();
-    SHORT_DELAY();
-    value = (value << 1) | SDA_Read();
     SCL_High();
+    SHORT_DELAY();
+    value = (value << 1) | SDA_Read(); // читаем в SCL HIGH
+    SCL_Low(); // спад → чип выставляет следующий бит
     SHORT_DELAY();
   }
   SDA_High();
@@ -183,27 +187,40 @@ static uint16_t BK4819_ReadU16(void) {
 
 static inline void _UpdateRegCache(BK4819_REGISTER_t reg, uint16_t data) {
   switch (reg) {
-  case BK4819_REG_43: gRegCache_43 = data; break;
-  case BK4819_REG_47: gRegCache_47 = data; break;
-  case BK4819_REG_7E: gRegCache_7E = data; break;
-  case 0x73:          gRegCache_73 = data; break;
-  default:            break;
+  case BK4819_REG_43:
+    gRegCache_43 = data;
+    break;
+  case BK4819_REG_47:
+    gRegCache_47 = data;
+    break;
+  case BK4819_REG_7E:
+    gRegCache_7E = data;
+    break;
+  case 0x73:
+    gRegCache_73 = data;
+    break;
+  default:
+    break;
   }
 }
 
 static inline uint16_t _ReadRegCached(BK4819_REGISTER_t reg) {
   switch (reg) {
   case BK4819_REG_43:
-    if (gRegCache_43 != 0xFFFF) return gRegCache_43;
+    if (gRegCache_43 != 0xFFFF)
+      return gRegCache_43;
     break;
   case BK4819_REG_47:
-    if (gRegCache_47 != 0xFFFF) return gRegCache_47;
+    if (gRegCache_47 != 0xFFFF)
+      return gRegCache_47;
     break;
   case BK4819_REG_7E:
-    if (gRegCache_7E != 0xFFFF) return gRegCache_7E;
+    if (gRegCache_7E != 0xFFFF)
+      return gRegCache_7E;
     break;
   case 0x73:
-    if (gRegCache_73 != 0xFFFF) return gRegCache_73;
+    if (gRegCache_73 != 0xFFFF)
+      return gRegCache_73;
     break;
   default:
     break;
@@ -212,24 +229,20 @@ static inline uint16_t _ReadRegCached(BK4819_REGISTER_t reg) {
 }
 
 uint16_t BK4819_ReadRegister(BK4819_REGISTER_t reg) {
-  if (reg == BK4819_REG_30 && reg30_cached) {
+  if (reg == BK4819_REG_30 && reg30_cached)
     return reg30_cache;
-  }
 
   uint32_t primask = __get_PRIMASK();
   __disable_irq();
 
   CS_High();
-  SCL_Low();
   SHORT_DELAY();
   CS_Low();
 
-  BK4819_WriteU8(reg | 0x80);
+  BK4819_WriteU8(reg | 0x80); // выходим с SCL=HIGH
   uint16_t value = BK4819_ReadU16();
 
-  SHORT_DELAY();
   CS_High();
-  SHORT_DELAY();
   SCL_High();
   SDA_High();
 
@@ -248,17 +261,13 @@ void BK4819_WriteRegister(BK4819_REGISTER_t reg, uint16_t data) {
   __disable_irq();
 
   CS_High();
-  SCL_Low();
   SHORT_DELAY();
   CS_Low();
 
   BK4819_WriteU8(reg);
-  DELAY_1US();
-  BK4819_WriteU16(data);
+  BK4819_WriteU16(data); // оба заканчиваются SCL=HIGH
 
-  SHORT_DELAY();
   CS_High();
-  SHORT_DELAY();
   SCL_High();
   SDA_High();
 
@@ -1480,9 +1489,9 @@ void BK4819_Init(void) {
   // cuts high-freq harmonics of bit-bang SPI in the RF range.
   // CSN stays default - it is not a clock line.
   LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SCL), GPIO_PIN_MASK(PIN_SCL),
-                      LL_GPIO_SPEED_FREQ_HIGH);
+                      LL_GPIO_SPEED_FREQ_LOW);
   LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
-                      LL_GPIO_SPEED_FREQ_HIGH);
+                      LL_GPIO_SPEED_FREQ_LOW);
 
   BK4819_WriteRegister(BK4819_REG_00, 0x8000);
   BK4819_WriteRegister(BK4819_REG_00, 0x0000);
