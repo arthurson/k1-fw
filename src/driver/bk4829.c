@@ -13,10 +13,11 @@ static uint16_t reg30_cache = 0;
 static bool reg30_cached = false;
 
 // 10 NOP @ 48 MHz ≈ 208 нс — полупериод SCK
-#define SHORT_DELAY() __asm volatile("nop\nnop\nnop\nnop\n")
+#define SHORT_DELAY() __asm volatile("nop\nnop\nnop\nnop\nnop\nnop\n")
 
 // 48 NOP @ 48 MHz ≈ 1 мкс
-#define DELAY_1US() __asm volatile("nop\nnop\nnop\nnop\nnop\n")
+#define DELAY_1US()                                                            \
+  SYSTICK_DelayUs(1) // __asm volatile("nop\nnop\nnop\nnop\nnop\n")
 
 // ============================================================================
 // Constants
@@ -536,8 +537,8 @@ void BK4819_TuneTo(uint32_t freq, bool precise) {
     BK4819_WriteRegister(BK4819_REG_30,
                          reg & ~(BK4819_REG_30_ENABLE_VCO_CALIB));
   }
-  /* SYSTICK_DelayUs(
-      300); // VCO stabilize time — критично для стабильности частоты */
+  SYSTICK_DelayUs(
+      300); // VCO stabilize time — критично для стабильности частоты
   BK4819_WriteRegister(BK4819_REG_30, reg);
 }
 
