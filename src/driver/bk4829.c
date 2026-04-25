@@ -12,7 +12,7 @@
 static uint16_t reg30_cache = 0;
 static bool reg30_cached = false;
 
-#define SHORT_DELAY() __asm volatile("nop\nnop\n")
+#define SHORT_DELAY() __asm volatile("")
 #define DELAY_1US() __asm volatile("nop\nnop\nnop\nnop\nnop\n")
 
 // ============================================================================
@@ -100,12 +100,28 @@ static uint16_t gRegCache_73 = 0xFFFF; // REG_73 AFC
 #define PIN_SCL GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_8)
 #define PIN_SDA GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_9)
 
-static inline void CS_Low(void) { GPIO_ResetOutputPin(PIN_CSN); }
+#define CS_PORT GPIO_PORT(PIN_CSN)
+#define CS_MASK GPIO_PIN_MASK(PIN_CSN)
+#define SCL_PORT GPIO_PORT(PIN_SCL)
+#define SCL_MASK GPIO_PIN_MASK(PIN_SCL)
+#define SDA_PORT GPIO_PORT(PIN_SDA)
+#define SDA_MASK GPIO_PIN_MASK(PIN_SDA)
+
+static inline void CS_Low(void) { CS_PORT->BSRR = (uint32_t)CS_MASK << 16; }
+static inline void CS_High(void) { CS_PORT->BSRR = CS_MASK; }
+
+static inline void SCL_Low(void) { SCL_PORT->BSRR = (uint32_t)SCL_MASK << 16; }
+static inline void SCL_High(void) { SCL_PORT->BSRR = SCL_MASK; }
+
+static inline void SDA_Low(void) { SDA_PORT->BSRR = (uint32_t)SDA_MASK << 16; }
+static inline void SDA_High(void) { SDA_PORT->BSRR = SDA_MASK; }
+
+/* static inline void CS_Low(void) { GPIO_ResetOutputPin(PIN_CSN); }
 static inline void CS_High(void) { GPIO_SetOutputPin(PIN_CSN); }
 static inline void SCL_Low(void) { GPIO_ResetOutputPin(PIN_SCL); }
 static inline void SCL_High(void) { GPIO_SetOutputPin(PIN_SCL); }
 static inline void SDA_Low(void) { GPIO_ResetOutputPin(PIN_SDA); }
-static inline void SDA_High(void) { GPIO_SetOutputPin(PIN_SDA); }
+static inline void SDA_High(void) { GPIO_SetOutputPin(PIN_SDA); } */
 
 static inline void SDA_AsOutput(void) {
   LL_GPIO_SetPinMode(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
@@ -533,8 +549,6 @@ void BK4819_TuneTo(uint32_t freq, bool precise) {
     BK4819_WriteRegister(BK4819_REG_30,
                          reg & ~(BK4819_REG_30_ENABLE_VCO_CALIB));
   }
-  SYSTICK_DelayUs(
-      300); // VCO stabilize time — критично для стабильности частоты
   BK4819_WriteRegister(BK4819_REG_30, reg);
 }
 
@@ -1480,7 +1494,7 @@ void BK4819_Init(void) {
   // cuts high-freq harmonics of bit-bang SPI in the RF range.
   // CSN stays default - it is not a clock line.
   LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SCL), GPIO_PIN_MASK(PIN_SCL),
-                      LL_GPIO_SPEED_FREQ_LOW);
+                      LL_GPIO_SPEED_FREQ_MEDIUM);
   LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
                       LL_GPIO_SPEED_FREQ_LOW);
 
