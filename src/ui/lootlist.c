@@ -80,8 +80,8 @@ static void tuneToLoot(const Loot *loot, bool save) {
   RADIO_SetParam(ctx, PARAM_BANDWIDTH, loot->bw, true);
   RADIO_SetParam(ctx, PARAM_GAIN, loot->gainIndex, true);
   RADIO_SetParam(ctx, PARAM_MODULATION, loot->modulation, true);
-  RADIO_SetParam(ctx, PARAM_SQUELCH_TYPE, loot->squelch.type, true);
-  RADIO_SetParam(ctx, PARAM_SQUELCH_VALUE, loot->squelch.value, true);
+  RADIO_SetParam(ctx, PARAM_SQUELCH_TYPE, loot->squelch_type, true);
+  RADIO_SetParam(ctx, PARAM_SQUELCH_VALUE, loot->squelch_value, true);
   RADIO_SetParam(ctx, PARAM_RADIO, loot->radio, true);
   RADIO_SetParam(ctx, PARAM_FREQUENCY, loot->f, save);
   RADIO_ApplySettings(ctx);
@@ -402,11 +402,11 @@ static void editLootField(uint16_t index, uint8_t field) {
                                           : "SI4732");
     break;
   case 4: // Squelch type
-    loot->squelch.type = (loot->squelch.type + 1) % 4; // OFF, NOI, N+M, M
+    loot->squelch_type = (loot->squelch_type + 1) % 4; // OFF, NOI, N+M, M
     STATUSLINE_SetText("SQL: %s",
-                       loot->squelch.type == 0   ? "OFF"
-                       : loot->squelch.type == 1 ? "NOI"
-                       : loot->squelch.type == 2 ? "N+M"
+                       loot->squelch_type == 0   ? "OFF"
+                       : loot->squelch_type == 1 ? "NOI"
+                       : loot->squelch_type == 2 ? "N+M"
                                                  : "M");
     break;
   case 5: // Gain
@@ -481,11 +481,11 @@ static void renderEditMode(void) {
       break;
     case 4: // Squelch
       PrintSmallEx(3, y, POS_L, color, "SQL: %s:%d",
-                   loot->squelch.type == 0   ? "OFF"
-                   : loot->squelch.type == 1 ? "NOI"
-                   : loot->squelch.type == 2 ? "N+M"
+                   loot->squelch_type == 0   ? "OFF"
+                   : loot->squelch_type == 1 ? "NOI"
+                   : loot->squelch_type == 2 ? "N+M"
                                              : "M",
-                   loot->squelch.value);
+                   loot->squelch_value);
       break;
     case 5: // Gain
       PrintSmallEx(3, y, POS_L, color, "Gain: %d", loot->gainIndex);
