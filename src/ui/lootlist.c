@@ -41,13 +41,8 @@ static uint8_t gEditField = 0;
 // Fields: 0=Freq, 1=Modulation, 2=BW, 3=Radio, 4=Squelch, 5=Gain, 6=Code
 #define EDIT_FIELD_COUNT 7
 static const char *EDIT_FIELD_NAMES[] = {
-    "Frequency",
-    "Modulation",
-    "Bandwidth",
-    "Radio",
-    "Squelch",
-    "Gain",
-    "CTCSS/DCS",
+    "Frequency", "Modulation", "Bandwidth", "Radio",
+    "Squelch",   "Gain",       "CTCSS/DCS",
 };
 
 typedef enum {
@@ -97,8 +92,7 @@ static void getLootItem(uint16_t i, uint16_t index) {
 
   displayFreqBlWl(y, item);
 
-  PrintSmallEx(LCD_WIDTH - 6, y + 7, POS_R, C_INVERT, "%us",
-               item->duration / 1000);
+  PrintSmallEx(LCD_WIDTH - 6, y + 7, POS_R, C_INVERT, "%us", item->duration);
 
   if (item->code != 0xFF) {
     if (item->isCd) {
@@ -116,7 +110,9 @@ static void getLootItemShort(uint16_t i, uint16_t index) {
   const Loot *loot = LOOT_Item(index);
   const uint8_t x = LCD_WIDTH - 6;
   const uint8_t y = MENU_Y + i * MENU_ITEM_H;
-  const uint32_t ago = (Now() - loot->lastTimeOpen) / 1000;
+  // wrap-арифметика uint16_t: корректно для разниц до 65535 сек ≈ 18ч
+  const uint16_t now_s = (uint16_t)(Now() / 1000);
+  const uint32_t ago = (uint16_t)(now_s - loot->lastTimeOpen);
 
   displayFreqBlWl(y, loot);
 
@@ -127,7 +123,7 @@ static void getLootItemShort(uint16_t i, uint16_t index) {
   case SORT_DUR:
   case SORT_BL:
   case SORT_F:
-    PrintSmallEx(x, y + 7, POS_R, C_INVERT, "%us", loot->duration / 1000);
+    PrintSmallEx(x, y + 7, POS_R, C_INVERT, "%us", loot->duration);
     break;
   }
 }
@@ -156,8 +152,8 @@ static void saveLootToCh(const Loot *loot, int16_t chnum, uint16_t scanlist) {
 
 static void showSaveProgress(uint32_t saved, uint32_t total) {
   FillRect(0, LCD_YCENTER - 4, LCD_WIDTH, 9, C_FILL);
-  PrintMediumEx(LCD_XCENTER, LCD_YCENTER + 3, POS_C, C_INVERT, "Saving... %lu/%lu",
-                saved, total);
+  PrintMediumEx(LCD_XCENTER, LCD_YCENTER + 3, POS_C, C_INVERT,
+                "Saving... %lu/%lu", saved, total);
   ST7565_Blit();
 }
 
@@ -341,9 +337,10 @@ static bool action(const uint16_t index, KEY_Code_t key, Key_State_t state) {
       if (LOOT_Size() > 0) {
         UI_ClearScreen();
         PrintMediumEx(LCD_XCENTER, 30, POS_C, C_FILL, "Save to CH#");
-        PrintSmallEx(LCD_XCENTER, 45, POS_C, C_FILL, "Enter number, EXIT:cancel");
+        PrintSmallEx(LCD_XCENTER, 45, POS_C, C_FILL,
+                     "Enter number, EXIT:cancel");
         ST7565_Blit();
-        
+
         gFInputCallback = cbSaveToChannel;
         FINPUT_setup(0, 4095, UNIT_RAW, false);
         gFInputValue1 = 0;
@@ -381,33 +378,30 @@ static void editLootField(uint16_t index, uint8_t field) {
     FINPUT_init();
     gEditMode = EDIT_MODE_FINPUT;
     break;
-  case 1: // Modulation
+  case 1:                                          // Modulation
     loot->modulation = (loot->modulation + 1) % 5; // FM, AM, WFM, USB, LSB
-    STATUSLINE_SetText("Mod: %s",
-                       loot->modulation == 0   ? "FM"
-                       : loot->modulation == 1 ? "AM"
-                       : loot->modulation == 2 ? "WFM"
-                       : loot->modulation == 3 ? "USB"
-                                               : "LSB");
+    STATUSLINE_SetText("Mod: %s", loot->modulation == 0   ? "FM"
+                                  : loot->modulation == 1 ? "AM"
+                                  : loot->modulation == 2 ? "WFM"
+                                  : loot->modulation == 3 ? "USB"
+                                                          : "LSB");
     break;
   case 2: // Bandwidth
     loot->bw = (loot->bw + 1) % 6;
     STATUSLINE_SetText("BW: %d", loot->bw);
     break;
-  case 3: // Radio
+  case 3:                                // Radio
     loot->radio = (loot->radio + 1) % 3; // BK4819, BK1080, SI4732
-    STATUSLINE_SetText("Radio: %s",
-                       loot->radio == 0   ? "BK4819"
-                       : loot->radio == 1 ? "BK1080"
-                                          : "SI4732");
+    STATUSLINE_SetText("Radio: %s", loot->radio == 0   ? "BK4819"
+                                    : loot->radio == 1 ? "BK1080"
+                                                       : "SI4732");
     break;
-  case 4: // Squelch type
+  case 4:                                              // Squelch type
     loot->squelch_type = (loot->squelch_type + 1) % 4; // OFF, NOI, N+M, M
-    STATUSLINE_SetText("SQL: %s",
-                       loot->squelch_type == 0   ? "OFF"
-                       : loot->squelch_type == 1 ? "NOI"
-                       : loot->squelch_type == 2 ? "N+M"
-                                                 : "M");
+    STATUSLINE_SetText("SQL: %s", loot->squelch_type == 0   ? "OFF"
+                                  : loot->squelch_type == 1 ? "NOI"
+                                  : loot->squelch_type == 2 ? "N+M"
+                                                            : "M");
     break;
   case 5: // Gain
     loot->gainIndex = (loot->gainIndex + 1) % 32;
@@ -447,8 +441,8 @@ static void renderEditMode(void) {
   PrintMediumEx(LCD_XCENTER, 8, POS_C, C_FILL, "Edit Loot #%u", gEditLootIndex);
   DrawLine(0, 10, LCD_WIDTH - 1, 10, C_FILL);
 
-  // Highlight selected row
-  #define FIELD_Y(f) (17 + (f) * 7)
+// Highlight selected row
+#define FIELD_Y(f) (17 + (f) * 7)
   FillRect(0, FIELD_Y(sel) - 5, LCD_WIDTH, 7, C_FILL);
 
   // Draw fields
@@ -462,13 +456,12 @@ static void renderEditMode(void) {
                    loot->f % MHZ);
       break;
     case 1: // Modulation
-      PrintSmallEx(
-          3, y, POS_L, color, "Mod: %s",
-          loot->modulation == 0   ? "FM"
-          : loot->modulation == 1 ? "AM"
-          : loot->modulation == 2 ? "WFM"
-          : loot->modulation == 3 ? "USB"
-                                  : "LSB");
+      PrintSmallEx(3, y, POS_L, color, "Mod: %s",
+                   loot->modulation == 0   ? "FM"
+                   : loot->modulation == 1 ? "AM"
+                   : loot->modulation == 2 ? "WFM"
+                   : loot->modulation == 3 ? "USB"
+                                           : "LSB");
       break;
     case 2: // Bandwidth
       PrintSmallEx(3, y, POS_L, color, "BW: %d", loot->bw);

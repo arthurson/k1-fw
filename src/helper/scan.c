@@ -50,9 +50,9 @@ static SCMD_Context cmdctx;
 static uint32_t sqReopenAt = 0;
 
 // Хелпер для PLL_VCO бита REG_30. Чтение REG_30 в драйвере bk4829.c кэшируется
-// глобально (см. reg30state), поэтому повторные reads бесплатны. Писать — дорого,
-// драйвер write не фильтрует. Поэтому пропускаем write, если бит уже в нужном
-// состоянии.
+// глобально (см. reg30state), поэтому повторные reads бесплатны. Писать —
+// дорого, драйвер write не фильтрует. Поэтому пропускаем write, если бит уже в
+// нужном состоянии.
 static void Reg30_SetPllVco(bool on) {
   uint16_t cur = BK4819_ReadRegister(BK4819_REG_30);
   uint16_t nv = on ? (cur | BK4819_REG_30_ENABLE_PLL_VCO)

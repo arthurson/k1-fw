@@ -1,7 +1,6 @@
 #ifndef LOOTLIST_H
 #define LOOTLIST_H
 
-#include "../driver/gpio.h"
 #include "../driver/keyboard.h"
 #include "../helper/measurements.h"
 #include "../inc/channel.h"
@@ -10,7 +9,7 @@
 #include <stdint.h>
 
 #ifndef LOOT_SIZE_MAX
-#define LOOT_SIZE_MAX 100
+#define LOOT_SIZE_MAX 300
 #endif
 
 extern Loot *gLastActiveLoot;

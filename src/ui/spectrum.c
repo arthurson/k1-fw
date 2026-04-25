@@ -287,8 +287,16 @@ void SP_RenderRssi(uint16_t rssi, char *text, bool top, VMinMax v) {
                text, Rssi2DBm(rssi));
 }
 
-void SP_RenderLine(uint16_t rssi, VMinMax v) {
-  uint8_t yVal = dbm2Y(Rssi2DBm(rssi), v);
+void SP_RenderLine(uint16_t value, VMinMax v) {
+  // Используем ту же формулу, что и SP_Render: для RSSI идёт через dBm-шкалу,
+  // для NOISE/GLITCH — линейно по диапазону v. Иначе планка порога будет
+  // в одной шкале, а бары спектра — в другой.
+  uint8_t yVal;
+  if (graphMeasurement == GRAPH_RSSI) {
+    yVal = dbm2Y(Rssi2DBm(value), v);
+  } else {
+    yVal = ConvertDomain(value, v.vMin, v.vMax, 0, SPECTRUM_H);
+  }
   DrawHLine(0, S_BOTTOM - yVal, filledPoints, C_INVERT);
 }
 

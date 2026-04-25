@@ -76,7 +76,7 @@ Loot *LOOT_AddEx(uint32_t f, bool reuse) {
   lastTimeCheck = Now();
   loot[lootIndex] = (Loot){
       .f = f,
-      .lastTimeOpen = Now(),
+      .lastTimeOpen = (uint16_t)(Now() / 1000),
       .duration = 0,
       .code = 0xFF,
       .open = true, // as we add it when open
@@ -193,13 +193,29 @@ void LOOT_UpdateEx(Loot *item, Measurement *msm) {
   // item->snr = msm->snr;
 
   if (item->open) {
-    item->duration += Now() - lastTimeCheck;
+    // Аккумулируем мс пока активен один и тот же loot, переносим целые
+    // секунды в item->duration. Сброс при смене активного — теряем <1 сек.
+    static const Loot *durationOwner = NULL;
+    static uint16_t durationFracMs = 0;
+
+    if (durationOwner != item) {
+      durationOwner = item;
+      durationFracMs = 0;
+    }
+    uint32_t dms = Now() - lastTimeCheck;
+    durationFracMs += (uint16_t)(dms > 999 ? 999 : dms); // защита от заскока
+    while (durationFracMs >= 1000) {
+      durationFracMs -= 1000;
+      if (item->duration < 0xFFFF)
+        item->duration++;
+    }
+
     gLastActiveLoot = item;
     gLastActiveLootIndex = LOOT_IndexOf(item);
     lastActiveLootF = item->f;
   }
   if (msm->open) {
-    item->lastTimeOpen = Now();
+    item->lastTimeOpen = (uint16_t)(Now() / 1000);
     uint32_t cd = 0;
     uint16_t ct = 0;
     uint8_t Code = 0;
@@ -303,7 +319,7 @@ CH LOOT_ToCh(const Loot *loot) {
 
 // Magic привязан к sizeof(Loot). При смене раскладки структуры — bump.
 #define LOOT_FILE_MAGIC 0x4C54u // 'LT'
-#define LOOT_FILE_VERSION 2
+#define LOOT_FILE_VERSION 3
 
 typedef struct {
   uint16_t magic;

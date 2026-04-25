@@ -22,7 +22,7 @@
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-#define ANALYSER_SETTINGS_MAGIC 0xA51Du // bump при смене структуры
+#define ANALYSER_SETTINGS_MAGIC 0xA51Eu // bump при смене структуры
 #define SQ_LEVEL_INVALID 0xFF
 #define CURSOR_INFO_TIMEOUT_MS 2000
 #define SETTINGS_SAVE_DEBOUNCE_MS 1000
@@ -37,11 +37,10 @@
 #define DBM_MAX_LO -139
 #define DBM_MAX_HI 10
 
-// Waterfall geometry
-#define WF_H 16
-#define WF_GAP 4
+// Layout
+#define SPLIT_GAP 4
 #define SPECTRUM_H_FULL 44
-#define SPECTRUM_H_SPLIT (SPECTRUM_H_FULL - WF_H - WF_GAP)
+#define SPECTRUM_H_SPLIT 24 // под peaks/listen/RSSI bar
 
 // ── Persisted settings ─────────────────────────────────────────────────────
 
@@ -52,9 +51,8 @@ typedef struct {
   uint32_t delay;
   uint32_t lastRangeStart;
   uint32_t lastRangeEnd;
-  uint8_t waterfallEnabled;
   uint8_t mode;
-  uint8_t _pad[2];
+  uint8_t _pad[3];
 } AnalyserSettings;
 
 static AnalyserSettings aSettings = {
@@ -64,7 +62,6 @@ static AnalyserSettings aSettings = {
     .delay = DELAY_DEFAULT_US,
     .lastRangeStart = 0,
     .lastRangeEnd = 0,
-    .waterfallEnabled = 0,
     .mode = 0,
 };
 
@@ -94,7 +91,8 @@ static void markSettingsDirty(void) {
 
 static Band range;
 static uint32_t targetF;
-static uint32_t scanF; // курсор сканера, отдельно от msm->f (где реально мерили)
+static uint32_t
+    scanF; // курсор сканера, отдельно от msm->f (где реально мерили)
 static uint32_t delay = DELAY_DEFAULT_US;
 static bool still;
 static bool listen;
@@ -113,14 +111,6 @@ typedef struct {
 } Marker;
 static Marker markerA;
 static Marker markerB;
-
-// Waterfall
-static bool waterfallOn;
-static uint8_t wfBuf[WF_H][LCD_WIDTH]; // [row][x] = rssi clamped to 0..255
-static uint8_t wfHead; // текущая (пишущаяся) строка
-static uint8_t
-    wfFilled; // кол-во полностью заполненных старых строк (0..WF_H-1)
-static uint8_t wfPrevXc; // trailing центр предыдущего бина (как spPrevXc)
 
 // Squelch tuner
 static SQL sq;
@@ -246,10 +236,10 @@ static void updatePeaks(void) {
 
 // ── Mode switching ─────────────────────────────────────────────────────────
 
-// Нужна ли уменьшенная высота спектра (для waterfall / peaks / RSSI bar)
+// Нужна ли уменьшенная высота спектра (для peaks / RSSI bar)
 static bool needSplit(void) {
-  return waterfallOn || analyserMode == MODE_PEAKS ||
-         analyserMode == MODE_SCAN_LISTEN || still || listen;
+  return analyserMode == MODE_PEAKS || analyserMode == MODE_SCAN_LISTEN ||
+         still || listen;
 }
 
 // Пересчитать SPECTRUM_H под текущее состояние. SP_Init сбросит буфер —
@@ -325,130 +315,6 @@ static void handleMarkerInput(void) {
   FINPUT_Show(onMarkerFreq);
 }
 
-// ── Waterfall ──────────────────────────────────────────────────────────────
-
-static void wfReset(void) {
-  memset(wfBuf, 0, sizeof(wfBuf));
-  wfHead = 0;
-  wfFilled = 0;
-  wfPrevXc = 0;
-}
-
-// Пишем измерение в текущую строку waterfall.
-// Бар на частоте f занимает диапазон [ixs, ixe] — SP_F2X возвращает ЦЕНТР,
-// границы считаются как полпути до соседних центров (как в SP_AddPoint).
-// Внутри диапазона берём max, чтобы повторные измерения не затирали пик.
-static void wfOnMeasure(void) {
-  if (!waterfallOn)
-    return;
-
-  uint32_t f = msm->f;
-  uint8_t xc = SP_F2X(f);
-  if (xc == 0xFF)
-    return;
-
-  uint32_t stepHz = StepFrequencyTable[range.step];
-  uint8_t next_xc =
-      (f + stepHz > range.end) ? (LCD_WIDTH - 1) : SP_F2X(f + stepHz);
-
-  int16_t ixs, ixe;
-  if (f == range.start) {
-    ixs = 0;
-    ixe = xc + ((int16_t)next_xc - xc) / 2;
-  } else if (f + stepHz > range.end) {
-    ixs = wfPrevXc + ((int16_t)xc - wfPrevXc) / 2;
-    ixe = LCD_WIDTH - 1;
-  } else {
-    ixs = wfPrevXc + ((int16_t)xc - wfPrevXc) / 2;
-    ixe = xc + ((int16_t)next_xc - xc) / 2 - 1;
-  }
-
-  if (ixs > ixe) {
-    int16_t t = ixs;
-    ixs = ixe;
-    ixe = t;
-  }
-  if (ixs < 0)
-    ixs = 0;
-  if (ixe > LCD_WIDTH - 1)
-    ixe = LCD_WIDTH - 1;
-
-  uint16_t r = msm->rssi;
-  uint8_t rByte = (r > 255) ? 255 : (uint8_t)r;
-
-  uint8_t *row = wfBuf[wfHead];
-  for (uint8_t x = (uint8_t)ixs; x <= (uint8_t)ixe; x++) {
-    if (rByte > row[x])
-      row[x] = rByte;
-  }
-
-  wfPrevXc = xc;
-}
-
-// Свип завершён — сдвигаем голову, обнуляем новую строку
-static void wfOnSweepEnd(void) {
-  if (!waterfallOn)
-    return;
-  if (wfFilled < WF_H - 1)
-    wfFilled++;
-  wfHead = (wfHead + 1) % WF_H;
-  memset(wfBuf[wfHead], 0, LCD_WIDTH);
-  wfPrevXc = 0;
-}
-
-static void wfSetEnabled(bool on) {
-  if (waterfallOn == on)
-    return;
-  waterfallOn = on;
-  SPECTRUM_H = on ? SPECTRUM_H_SPLIT : SPECTRUM_H_FULL;
-  wfReset();
-  SP_Init(&range);
-  markSettingsDirty();
-  gRedrawScreen = true;
-}
-
-// 2x2 dither → 4 градации + выкл. Порог привязан к rowIdx (индекс данных),
-// чтобы паттерн прокручивался вместе с waterfall и не мерцал.
-static const uint8_t bayer2[2][2] = {
-    {0, 2},
-    {3, 1},
-};
-
-// Рендер: row=0 — текущая (частично заполненная), вниз — старшие.
-// Сырой rssi в буфере нормализуется в 0..255 по vMin/vMax — при правке
-// dBm-шкалы весь waterfall сразу переэкспонируется.
-static void wfRender(VMinMax v) {
-  if (!waterfallOn)
-    return;
-  int32_t span = (int32_t)v.vMax - (int32_t)v.vMin;
-  if (span <= 0)
-    return;
-
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H + WF_GAP;
-  uint8_t rows = wfFilled + 1;
-  if (rows > WF_H)
-    rows = WF_H;
-
-  for (uint8_t r = 0; r < rows; r++) {
-    uint8_t rowIdx = (wfHead + WF_H - r) % WF_H;
-    uint8_t y = y0 + r;
-    uint8_t by = rowIdx & 1;
-    const uint8_t *line = wfBuf[rowIdx];
-    for (uint8_t x = 0; x < LCD_WIDTH; x++) {
-      uint8_t val = line[x];
-      if (val == 0)
-        continue;
-      int32_t norm = ((int32_t)val - (int32_t)v.vMin) * 255 / span;
-      if (norm <= 0)
-        continue;
-      uint8_t level = (norm >= 255) ? 4 : (uint8_t)(norm * 5 / 256);
-      if (level > bayer2[by][x & 1]) {
-        PutPixel(x, y, 1);
-      }
-    }
-  }
-}
-
 // ── dBm tuner helpers ──────────────────────────────────────────────────────
 
 static int16_t clampI16(int16_t v, int16_t lo, int16_t hi) {
@@ -489,7 +355,6 @@ void ANALYSER_UpdateSave(void) {
   aSettings.delay = delay;
   aSettings.lastRangeStart = range.start;
   aSettings.lastRangeEnd = range.end;
-  aSettings.waterfallEnabled = waterfallOn ? 1 : 0;
   aSettings.mode = (uint8_t)analyserMode;
   analyserSettingsSave();
   settingsDirty = false;
@@ -526,94 +391,9 @@ static void autoScaleDbm(void) {
   TOAST_Push("Scale %d..%d", dbMin, dbMax);
 }
 
-// ── Auto-squelch ───────────────────────────────────────────────────────────
-// Калибровка порогов по N свипам пустого эфира. Усреднение → margin.
-// Запускается из sqTuner (KEY_5), сохраняется в VHF/UHF preset под
-// текущий squelch level.
-
-#define AUTO_SQ_SWEEPS 3
-#define AUTO_SQ_RSSI_MARGIN 8
-#define AUTO_SQ_NOISE_MARGIN 8
-#define AUTO_SQ_GLITCH_MARGIN 10
-
-static bool autoSqActive;
-static uint8_t autoSqSweepCnt;
-static uint32_t autoSqRssiSum;
-static uint32_t autoSqNoiseSum;
-static uint32_t autoSqGlitchSum;
-static uint32_t autoSqSamples;
-
-static void autoSqStart(void) {
-  if (still) {
-    TOAST_Push("AutoSQL: scan only");
-    return;
-  }
-  autoSqActive = true;
-  autoSqSweepCnt = 0;
-  autoSqRssiSum = 0;
-  autoSqNoiseSum = 0;
-  autoSqGlitchSum = 0;
-  autoSqSamples = 0;
-  TOAST_Push("AutoSQL: calibrating");
-}
-
-static void autoSqAbort(void) {
-  if (!autoSqActive)
-    return;
-  autoSqActive = false;
-  TOAST_Push("AutoSQL: aborted");
-}
-
-// Вызывать в measure() при каждом замере
-static void autoSqSample(void) {
-  if (!autoSqActive)
-    return;
-  if (still) {
-    autoSqAbort();
-    return;
-  }
-  autoSqRssiSum += msm->rssi;
-  autoSqNoiseSum += msm->noise;
-  autoSqGlitchSum += msm->glitch;
-  autoSqSamples++;
-}
-
-// Вызывать на конце каждого свипа
-static void autoSqOnSweep(void) {
-  if (!autoSqActive)
-    return;
-  if (++autoSqSweepCnt < AUTO_SQ_SWEEPS)
-    return;
-  autoSqActive = false;
-
-  if (!autoSqSamples) {
-    TOAST_Push("AutoSQL: no data");
-    return;
-  }
-
-  uint16_t avgR = autoSqRssiSum / autoSqSamples;
-  uint16_t avgN = autoSqNoiseSum / autoSqSamples;
-  uint16_t avgG = autoSqGlitchSum / autoSqSamples;
-
-  SquelchPreset p;
-  uint32_t ro = (uint32_t)avgR + AUTO_SQ_RSSI_MARGIN;
-  p.ro = (ro > 255) ? 255 : (uint8_t)ro;
-  p.no = (avgN > AUTO_SQ_NOISE_MARGIN) ? (uint8_t)(avgN - AUTO_SQ_NOISE_MARGIN)
-                                       : 0;
-  p.go = (avgG > AUTO_SQ_GLITCH_MARGIN)
-             ? (uint8_t)(avgG - AUTO_SQ_GLITCH_MARGIN)
-             : 0;
-
-  sqApplyThresholds(p);
-  SQ_SavePreset(ctx->frequency >= SETTINGS_GetFilterBound() ? "/uhf.sq"
-                                                            : "/vhf.sq",
-                sqEditLevel, &p);
-  TOAST_Push("SQL R%u N%u G%u", p.ro, p.no, p.go);
-}
-
 // ── Range helpers ──────────────────────────────────────────────────────────
 
-// Всё, что обнуляется при смене диапазона: пики, auto-маркеры, waterfall,
+// Всё, что обнуляется при смене диапазона: пики, auto-маркеры,
 // состояние settle и debounced save. Manual-маркеры сохраняются — они
 // привязаны к абсолютной частоте, а не к позиции на экране.
 static void onRangeChanged(void) {
@@ -622,7 +402,6 @@ static void onRangeChanged(void) {
     markerA.f = 0;
   if (!markerB.manual)
     markerB.f = 0;
-  wfReset();
   scanAwaitingSettle = false;
   markSettingsDirty();
 }
@@ -683,8 +462,6 @@ static char getOverlayChar(void) {
     return 'Q';
   if (showDbmTuner)
     return 'D';
-  if (autoSqActive)
-    return 'A';
   return 0;
 }
 
@@ -748,19 +525,11 @@ static bool sqTunerKey(KEY_Code_t key, Key_State_t state) {
   case KEY_6:
     setDelayUs(adjustDelay(key == KEY_4 ? 1 : -1));
     return true;
-  case KEY_5:
-    autoSqStart();
-    return true;
   case KEY_0:
     sqStp = (sqStp >= 100) ? 1 : sqStp * 10;
     return true;
-  case KEY_MENU: {
-    SquelchPreset preset = {.ro = sq.ro, .no = sq.no, .go = sq.go};
-    SQ_SavePreset(ctx->frequency >= SETTINGS_GetFilterBound() ? "/uhf.sq"
-                                                              : "/vhf.sq",
-                  sqEditLevel, &preset);
+  case KEY_MENU:
     return true;
-  }
   default:
     break;
   }
@@ -958,19 +727,13 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     }
     return true;
   case KEY_SIDE2:
-    if (state == KEY_LONG_PRESSED) {
-      // В SCAN_LISTEN waterfall не актуален (area занята loot/RSSI)
-      if (analyserMode != MODE_SCAN_LISTEN) {
-        wfSetEnabled(!waterfallOn);
-      }
-      return true;
-    }
     if (state == KEY_RELEASED) {
       cycleMode();
     }
     return true;
   case KEY_STAR:
-    APPS_run(APP_LOOTLIST);
+    LOOTLIST_init();
+    gLootlistActive = true;
     return true;
   default:
     break;
@@ -1073,9 +836,6 @@ void ANALYSER_init(void) {
     delay = DELAY_DEFAULT_US;
   }
 
-  waterfallOn = (aSettings.waterfallEnabled != 0);
-  wfReset();
-
   analyserMode =
       (aSettings.mode < MODE_COUNT) ? (AnalyserMode)aSettings.mode : MODE_SCAN;
   peaksFound = 0;
@@ -1120,7 +880,6 @@ void ANALYSER_deinit(void) {
   aSettings.delay = delay;
   aSettings.lastRangeStart = range.start;
   aSettings.lastRangeEnd = range.end;
-  aSettings.waterfallEnabled = waterfallOn ? 1 : 0;
   aSettings.mode = (uint8_t)analyserMode;
   analyserSettingsSave();
 }
@@ -1142,7 +901,6 @@ static void measure(void) {
     msm->open = true;
   }
   LOOT_Update(msm);
-  autoSqSample();
 }
 
 static void updateListening(void) {
@@ -1180,7 +938,6 @@ static void updateScan(void) {
   measure();
   if (!still) {
     SP_AddPoint(msm);
-    wfOnMeasure();
   }
 
   if (still)
@@ -1190,8 +947,6 @@ static void updateScan(void) {
   scanF += StepFrequencyTable[range.step];
 
   if (scanF > range.end) {
-    wfOnSweepEnd();
-    autoSqOnSweep();
     if (analyserMode == MODE_PEAKS || analyserMode == MODE_SCAN_LISTEN) {
       updatePeaks();
       updateMarkersFromPeaks();
@@ -1274,14 +1029,10 @@ static void renderSqTuner(void) {
   const char *labels[] = {"R", "N", "G"};
   uint16_t values[] = {sq.ro, sq.no, sq.go};
 
-  // Заголовок: уровень и шаг одной строкой
-  PrintSmallEx(LCD_WIDTH - 1, 12, POS_R, C_FILL, "SQL L%u s%u", sqEditLevel,
-               sqStp);
-
   for (uint8_t i = 0; i < 3; i++) {
     uint8_t y = 18 + 6 * i;
     if (i == sqEditParam) {
-      FillRect(LCD_WIDTH - 30, y - 5, 30, 6, C_FILL);
+      FillRect(LCD_WIDTH - 30, y - 5, 30, 7, C_FILL);
       PrintSmallEx(LCD_WIDTH - 2, y, POS_R, C_CLEAR, "%s %3u", labels[i],
                    values[i]);
     } else {
@@ -1324,7 +1075,7 @@ static void renderPeakMarker(VMinMax v) {
 // Таблица маркеров под спектром (режим PEAKS): 2 строки по 6 пикс.
 // Manual-маркер метки выделяется инверсией, auto — обычная буква.
 static void renderMarkersTable(void) {
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + WF_GAP;
+  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + SPLIT_GAP;
   const Marker *markers[2] = {&markerA, &markerB};
   const char labels[2] = {'A', 'B'};
 
@@ -1354,16 +1105,16 @@ static void renderMarkersTable(void) {
 
 // Info-блок для SCAN_LISTEN: loot-инфа + RSSI bar в area под спектром
 static void renderScanListenInfo(void) {
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + WF_GAP;
+  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + SPLIT_GAP;
   if (gLastActiveLoot) {
-    UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, y0 + 5, POS_C);
+    UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, y0 + 8, POS_C);
   }
   UI_RSSIBar(y0 + 12);
 }
 
 // RSSI bar в area под спектром (STILL/listen)
 static void renderStillRssiBar(void) {
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + WF_GAP;
+  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + SPLIT_GAP;
   UI_RSSIBar(y0 + 6);
 }
 
@@ -1406,7 +1157,6 @@ void ANALYSER_render(void) {
   VMinMax v = {.vMin = DBm2Rssi(ANALYSERMENU_GetDbmMin()),
                .vMax = DBm2Rssi(ANALYSERMENU_GetDbmMax())};
   SP_Render(&range, v);
-  wfRender(v);
   renderBottomFreq();
 
   // Левый верх: базовый режим → (опц. оверлей инверсно) → delay.
@@ -1426,18 +1176,16 @@ void ANALYSER_render(void) {
 
   if (still || listen) {
     renderStillInfo();
-    if (!waterfallOn)
-      renderStillRssiBar();
+    renderStillRssiBar();
   } else {
     // scan-режимы: центр — peak marker (слева сверху), area под спектром — по
     // режиму
     switch (analyserMode) {
     case MODE_PEAKS:
-      if (!waterfallOn)
-        renderMarkersTable();
+      renderMarkersTable();
       break;
     case MODE_SCAN_LISTEN:
-      renderScanListenInfo(); // всегда (waterfall в этом режиме не рисуется)
+      renderScanListenInfo();
       break;
     default:
       renderPeakMarker(v);

@@ -20,7 +20,6 @@ typedef enum {
   APP_CHLIST,
   APP_MESSENGER,
   // APP_OSC,
-  APP_LOOTLIST,
   APP_FILES,
   APP_ABOUT,
 
@@ -42,7 +41,7 @@ extern const App apps[APPS_COUNT];
 extern const AppType_t appsAvailableToRun[RUN_APPS_COUNT];
 
 extern AppType_t gCurrentApp;
-extern char gOpenedFile[64];  // Filename opened from filemanager
+extern char gOpenedFile[64]; // Filename opened from filemanager
 
 AppType_t APPS_Peek();
 bool APPS_key(KEY_Code_t Key, KEY_State_t state);
