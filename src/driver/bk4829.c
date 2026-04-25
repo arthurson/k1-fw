@@ -141,31 +141,24 @@ static inline uint16_t scale_frequency(uint16_t freq) {
   return (((uint32_t)freq * 1353245u) + (1u << 16)) >> 17;
 }
 
-void BK4819_WriteU8(uint8_t data) {
-  for (int i = 0; i < 8; i++) {
-    SCL_Low();
-    if (data & 0x80)
-      SDA_High();
-    else
-      SDA_Low();
-    SHORT_DELAY();
-    SCL_High(); // защёлкивание
-    SHORT_DELAY();
-    data <<= 1;
-  }
-  // выходим с SCL=HIGH
+static inline void SDA_WriteBit(uint32_t bit) {
+  SDA_PORT->BSRR = bit ? SDA_MASK : ((uint32_t)SDA_MASK << 16);
 }
 
-void BK4819_WriteU16(uint16_t data) {
-  for (int i = 0; i < 16; i++) {
-    SCL_Low();
-    if (data & 0x8000)
-      SDA_High();
-    else
-      SDA_Low();
-    SHORT_DELAY();
-    SCL_High();
-    SHORT_DELAY();
+static inline void BK4819_WriteU8(uint8_t data) {
+  for (unsigned i = 0; i < 8; ++i) {
+    SCL_PORT->BSRR = (uint32_t)SCL_MASK << 16;
+    SDA_PORT->BSRR = (data & 0x80u) ? SDA_MASK : ((uint32_t)SDA_MASK << 16);
+    SCL_PORT->BSRR = SCL_MASK;
+    data <<= 1;
+  }
+}
+
+static inline void BK4819_WriteU16(uint16_t data) {
+  for (unsigned i = 0; i < 16; ++i) {
+    SCL_PORT->BSRR = (uint32_t)SCL_MASK << 16;
+    SDA_PORT->BSRR = (data & 0x8000u) ? SDA_MASK : ((uint32_t)SDA_MASK << 16);
+    SCL_PORT->BSRR = SCL_MASK;
     data <<= 1;
   }
 }
