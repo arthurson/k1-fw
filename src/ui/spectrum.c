@@ -169,9 +169,9 @@ void SP_AddPoint(const Measurement *msm) {
       (msm->f + step > range->end) ? (MAX_POINTS - 1) : SP_F2X(msm->f + step);
 
   int16_t ixs, ixe;
-  if (xc == 0) { // ← по пикселю, не по частоте
+  if (xc == 0) {
     ixs = 0;
-    ixe = (int16_t)next_xc / 2;
+    ixe = (int16_t)next_xc / 2 - 1; // ← добавили -1, теперь симметрично
   } else if (msm->f + step > range->end) {
     ixs = (int16_t)spPrevXc + ((int16_t)xc - spPrevXc) / 2;
     ixe = MAX_POINTS - 1;
