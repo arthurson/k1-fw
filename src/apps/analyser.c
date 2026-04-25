@@ -750,6 +750,13 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
     return true;
   }
 
+  if (key == KEY_2 &&
+      (state == KEY_LONG_PRESSED || state == KEY_LONG_PRESSED_CONT)) {
+    setRange(range.start,
+             range.start + LCD_WIDTH * StepFrequencyTable[range.step]);
+    return true;
+  }
+
   if (ANALYSERMENU_Key(key, state))
     return true;
 
