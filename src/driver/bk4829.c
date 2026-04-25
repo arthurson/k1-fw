@@ -12,12 +12,8 @@
 static uint16_t reg30_cache = 0;
 static bool reg30_cached = false;
 
-// 10 NOP @ 48 MHz ≈ 208 нс — полупериод SCK
-#define SHORT_DELAY() __asm volatile("nop\nnop\nnop\nnop\nnop\nnop\n")
-
-// 48 NOP @ 48 MHz ≈ 1 мкс
-#define DELAY_1US()                                                            \
-  SYSTICK_DelayUs(1) // __asm volatile("nop\nnop\nnop\nnop\nnop\n")
+#define SHORT_DELAY() __asm volatile("nop\nnop\n")
+#define DELAY_1US() __asm volatile("nop\nnop\nnop\nnop\nnop\n")
 
 // ============================================================================
 // Constants
@@ -1526,7 +1522,8 @@ void BK4819_Init(void) {
   BK4819_WriteRegister(0x1C, 0x07C0);
   BK4819_WriteRegister(0x1D, 0xE555);
   BK4819_WriteRegister(0x1E, 0x4C58);
-  BK4819_WriteRegister(0x1F, 0xC65A); // PLL CP 0:3
+  BK4819_WriteRegister(0x1F,
+                       0xC65A & ~(0b1111 << 12) | (3 << 12)); // PLL CP 0:3
 
   BK4819_WriteRegister(BK4819_REG_3E, 0x94C6);
 
