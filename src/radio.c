@@ -503,11 +503,29 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
     BK4819_SetAFCSpeed(ctx->afc_speed);
     return true;
   case PARAM_AF_RX_300:
+    if (RADIO_IsSSB(ctx)) {
+      // SSB sound boost — не трогаем, уже выставлен BK4819SetModulation
+      // или явно выставляем:
+      BK4819_WriteRegister(0x54, 0x90D1);
+      BK4819_WriteRegister(0x55, 0x3271);
+    } else {
+      BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
+    }
+    return true;
+
+  case PARAM_AF_RX_3K:
+    if (RADIO_IsSSB(ctx)) {
+      BK4819_WriteRegister(0x75, 0xFC13);
+    } else {
+      BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
+    }
+    return true;
+  /* case PARAM_AF_RX_300:
     BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
     return true;
   case PARAM_AF_RX_3K:
     BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
-    return true;
+    return true; */
   case PARAM_AF_TX_300:
     BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
     return true;
