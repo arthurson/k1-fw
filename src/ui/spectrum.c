@@ -164,21 +164,21 @@ uint32_t SP_X2F(uint8_t xi) {
 #define _MAX(a, b) (((a) > (b)) ? (a) : (b))
 
 void SP_AddPoint(const Measurement *msm) {
-  uint8_t xc = SP_F2X(msm->f);
-  uint8_t next_xc =
-      (msm->f + step > range->end) ? (MAX_POINTS - 1) : SP_F2X(msm->f + step);
+ uint8_t xc      = SP_F2X(msm->f);
+    uint8_t next_xc = (msm->f + step >= range->end)   // ← >= вместо >
+                      ? (MAX_POINTS - 1) : SP_F2X(msm->f + step);
 
-  int16_t ixs, ixe;
-  if (xc == 0) {
-    ixs = 0;
-    ixe = (int16_t)next_xc / 2 - 1; // ← добавили -1, теперь симметрично
-  } else if (msm->f + step > range->end) {
-    ixs = (int16_t)spPrevXc + ((int16_t)xc - spPrevXc) / 2;
-    ixe = MAX_POINTS - 1;
-  } else {
-    ixs = (int16_t)spPrevXc + ((int16_t)xc - spPrevXc) / 2;
-    ixe = (int16_t)xc + ((int16_t)next_xc - xc) / 2 - 1;
-  }
+    int16_t ixs, ixe;
+    if (xc == 0) {
+        ixs = 0;
+        ixe = ((int16_t)next_xc + 1) / 2 - 1;         // ← ceiling
+    } else if (msm->f + step >= range->end) {          // ← >= вместо >
+        ixs = ((int16_t)spPrevXc + xc + 1) / 2;       // ← ceiling
+        ixe = MAX_POINTS - 1;
+    } else {
+        ixs = ((int16_t)spPrevXc + xc + 1) / 2;       // ← ceiling
+        ixe = (xc + (int16_t)next_xc + 1) / 2 - 1;   // ← ceiling
+    }
 
   if (ixs > ixe) {
     int16_t t = ixs;
