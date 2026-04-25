@@ -164,54 +164,48 @@ uint32_t SP_X2F(uint8_t xi) {
 #define _MAX(a, b) (((a) > (b)) ? (a) : (b))
 
 void SP_AddPoint(const Measurement *msm) {
- uint8_t xc      = SP_F2X(msm->f);
-    uint8_t next_xc = (msm->f + step >= range->end)   // ← >= вместо >
+    uint8_t xc      = SP_F2X(msm->f);
+    uint8_t next_xc = (msm->f + step >= range->end)   // >= вместо >
                       ? (MAX_POINTS - 1) : SP_F2X(msm->f + step);
 
     int16_t ixs, ixe;
-    if (xc == 0) {
+    if (xc == 0) {                                     // по пикселю, не по частоте
         ixs = 0;
-        ixe = ((int16_t)next_xc + 1) / 2 - 1;         // ← ceiling
-    } else if (msm->f + step >= range->end) {          // ← >= вместо >
-        ixs = ((int16_t)spPrevXc + xc + 1) / 2;       // ← ceiling
+        ixe = (int16_t)(xc + next_xc) / 2;            // Voronoi правая граница
+    } else if (msm->f + step >= range->end) {          // >= вместо >
+        ixs = (int16_t)(spPrevXc + xc) / 2 + 1;       // Voronoi левая граница
         ixe = MAX_POINTS - 1;
     } else {
-        ixs = ((int16_t)spPrevXc + xc + 1) / 2;       // ← ceiling
-        ixe = (xc + (int16_t)next_xc + 1) / 2 - 1;   // ← ceiling
+        ixs = (int16_t)(spPrevXc + xc) / 2 + 1;       // Voronoi: floor(mid) + 1
+        ixe = (int16_t)(xc + next_xc) / 2;            // Voronoi: floor(mid)
     }
 
-  if (ixs > ixe) {
-    int16_t t = ixs;
-    ixs = ixe;
-    ixe = t;
-  }
-  ixs = _MAX(0, ixs);
-  ixe = _MIN(MAX_POINTS - 1, ixe);
+    ixs = _MAX(0,              ixs);
+    ixe = _MIN(MAX_POINTS - 1, ixe);
 
-  for (uint8_t xi = (uint8_t)ixs; xi <= (uint8_t)ixe; ++xi) {
-    uint8_t byte = xi / 8, bit = xi % 8;
-    if ((visited[byte] & (1 << bit)) == 0) {
-      rssiHistory[xi] = msm->rssi;
-      noiseHistory[xi] = msm->noise;
-      glitchHistory[xi] = msm->glitch;
-      visited[byte] |= (1 << bit);
-    } else if (msm->rssi > rssiHistory[xi]) {
-      rssiHistory[xi] = msm->rssi;
-      noiseHistory[xi] = msm->noise;
-      glitchHistory[xi] = msm->glitch;
+    for (uint8_t xi = (uint8_t)ixs; xi <= (uint8_t)ixe; ++xi) {
+        uint8_t byte = xi / 8, bit = xi % 8;
+        if ((visited[byte] & (1 << bit)) == 0) {
+            rssiHistory[xi]   = msm->rssi;
+            noiseHistory[xi]  = msm->noise;
+            glitchHistory[xi] = msm->glitch;
+            visited[byte]    |= (1 << bit);
+        } else if (msm->rssi > rssiHistory[xi]) {
+            rssiHistory[xi]   = msm->rssi;
+            noiseHistory[xi]  = msm->noise;
+            glitchHistory[xi] = msm->glitch;
+        }
     }
-  }
 
-  // ← вынесли за цикл: одно сравнение вместо N
-  if ((uint8_t)ixe + 1u > filledPoints)
-    filledPoints = (uint8_t)ixe + 1;
+    if ((uint8_t)ixe + 1u > filledPoints)
+        filledPoints = (uint8_t)ixe + 1;
 
-  spPrevXc = xc;
+    spPrevXc = xc;
 
-  if (msm->rssi > spPeakRssi) {
-    spPeakRssi = msm->rssi;
-    spPeakF = msm->f;
-  }
+    if (msm->rssi > spPeakRssi) {
+        spPeakRssi = msm->rssi;
+        spPeakF    = msm->f;
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────
