@@ -22,9 +22,9 @@
 #include "../ui/spectrum.h"
 #include "../ui/statusline.h"
 #include "apps.h"
-#include <stdint.h>
 
 static char String[16];
+static bool gShowFreqScale = false;
 
 static const char *graphMeasurementNames[] = {
     [GRAPH_RSSI] = "RSSI",     //
@@ -60,6 +60,7 @@ void VFO1_init(void) {
   if (vfo->mode == MODE_CHANNEL) {
     setChannel(vfo->channel_index);
   }
+
   updateBand();
 
   SCAN_SetMode(SCAN_MODE_SINGLE);
@@ -93,6 +94,7 @@ static bool handleFrequencyChange(KEY_Code_t key) {
     RADIO_IncDecParam(ctx, PARAM_FREQUENCY,
                       (key == KEY_UP) ^ gSettings.invertButtons, true);
   }
+
   updateBand();
   return true;
 }
@@ -148,7 +150,7 @@ static bool handleLongPress(KEY_Code_t key) {
     return true;
 
   case KEY_8:
-    RADIO_IncDecParam(ctx, PARAM_TX_OFFSET, true, true);
+    gShowFreqScale = !gShowFreqScale;
     return true;
 
   case KEY_0:
@@ -236,12 +238,14 @@ static bool handleRelease(KEY_Code_t key, Key_State_t state) {
       gMonitorMode = false;
       return true;
     }
+
     if (!APPS_exit()) {
       RADIO_SaveCurrentVFO(gRadioState);
       RADIO_SwitchVFO(gRadioState,
                       IncDecU(vfoN, 0, gRadioState->num_vfos, true));
       updateBand();
     }
+
     return true;
 
   default:
@@ -256,9 +260,11 @@ bool VFO1_key(KEY_Code_t key, Key_State_t state) {
   if (REGSMENU_Key(key, state)) {
     return true;
   }
+
   if (ANALYSERMENU_Key(key, state)) {
     return true;
   }
+
   if (VFOMENU_Key(key, state)) {
     return true;
   }
@@ -279,6 +285,7 @@ bool VFO1_key(KEY_Code_t key, Key_State_t state) {
     } else {
       graphMeasurement = _graphMeasurement;
     }
+
     RADIO_ToggleTX(ctx, isTx);
 
     return true;
@@ -325,15 +332,14 @@ static void renderChannelName(uint8_t y, uint16_t channel) {
                gRadioState->num_vfos);
   if (gRadioState->vfos[vfoN].mode == MODE_CHANNEL) {
     PrintSmallEx(32, y - 9, POS_L, C_FILL, "MR %03u", channel);
-    UI_Scanlists(LCD_WIDTH - 25, y - 13, gSettings.currentScanlist);
   }
+  UI_Scanlists(LCD_WIDTH - 25, y - 13, gSettings.currentScanlist);
 }
 
 static void renderStatusLine(void) {
   if (gIsNumNavInput) {
     return;
   }
-
   if (!gSettings.mWatch || vfo->is_open) {
     STATUSLINE_RenderRadioSettings();
   } else {
@@ -362,6 +368,7 @@ static void renderCodes(uint8_t BASE) {
     PrintSmallEx(0, BASE - 6, POS_L, C_FILL, "R%s",
                  RADIO_GetParamValueString(ctx, PARAM_RX_CODE));
   }
+
   if (ctx->tx_state.code.type) {
     PrintSmallEx(0, BASE, POS_L, C_FILL, "T%s",
                  RADIO_GetParamValueString(ctx, PARAM_TX_CODE));
@@ -404,6 +411,7 @@ static void renderLootInfo(void) {
     } else {
       PrintRTXCode(String, CODE_TYPE_CONTINUOUS_TONE, gLastActiveLoot->code);
     }
+
     PrintSmallEx(0, LCD_HEIGHT - 1, POS_L, C_FILL, "%s", String);
   }
 
@@ -417,6 +425,73 @@ static void renderLootInfo(void) {
   if (gRadioState->multiwatch_enabled) {
     PrintMediumEx(LCD_XCENTER, LCD_HEIGHT - 9, POS_C, C_FILL, "M");
   }
+}
+
+static uint8_t scaleF2X(uint32_t f, uint32_t fs, uint32_t fe) {
+  if (f <= fs)
+    return 0;
+  if (f >= fe)
+    return LCD_WIDTH - 1;
+  return (uint8_t)(((uint64_t)(f - fs) * (LCD_WIDTH - 1)) / (fe - fs));
+}
+
+static void drawCenterArrow(uint8_t axisY) {
+  const uint8_t cx = LCD_XCENTER - 1;
+  DrawVLine(cx, axisY + 1, 2, C_FILL);
+  FillRect(cx - 1, axisY + 3, 3, 1, C_FILL);
+  FillRect(cx - 2, axisY + 4, 5, 1, C_FILL);
+}
+
+static void drawLootMarker(uint8_t x, uint8_t axisY, bool active) {
+  const uint8_t h = 3;
+  DrawVLine(x, axisY - h, h, C_FILL);
+  PutPixel(x - 1, axisY - h, C_FILL);
+  PutPixel(x + 1, axisY - h, C_FILL);
+}
+
+static void drawVisibleLoot(uint32_t fs, uint32_t fe, uint8_t axisY) {
+  for (uint16_t i = 0; i < LOOT_Size(); ++i) {
+    const Loot *loot = LOOT_Item(i);
+    if (loot->f < fs || loot->f > fe)
+      continue;
+
+    const uint8_t x = scaleF2X(loot->f, fs, fe);
+    const bool isActive = (loot == gLastActiveLoot);
+    drawLootMarker(x, axisY - 3, true);
+  }
+}
+
+static void renderFrequencyScale(uint8_t BASE, uint32_t centerF) {
+  const uint8_t y = BASE + 8;
+  const uint8_t h = LCD_HEIGHT - y;
+  const uint8_t axisY = y + h - 3;
+  const uint32_t step = StepFrequencyTable[ctx->step];
+  const uint32_t span = step * 20;
+  const uint32_t half = span / 2;
+  const uint32_t fs = centerF > half ? centerF - half : 0;
+  const uint32_t fe = centerF + half;
+  uint32_t major = step * 5;
+
+  FillRect(0, y, LCD_WIDTH, h, C_CLEAR);
+  PrintSmallEx(0, y + 5, POS_L, C_FILL, "SCL");
+  DrawHLine(0, axisY, LCD_WIDTH, C_FILL);
+
+  if (major < KHZ)
+    major = KHZ;
+
+  uint32_t first = fs - (fs % step);
+  for (uint32_t ff = first; ff <= fe; ff += step) {
+    uint8_t x = scaleF2X(ff, fs, fe);
+    const bool isMajor = (ff % major) == 0;
+    const uint8_t th = isMajor ? 5 : 2;
+    DrawVLine(x, axisY - th + 1, th, C_FILL);
+  }
+
+  // DrawVLine(LCD_XCENTER, y, axisY - y + 1, C_INVERT);
+  /* PrintSmallEx(LCD_XCENTER, y + 5, POS_C, C_FILL, "%u.%05u", centerF / MHZ,
+               centerF % MHZ); */
+  drawVisibleLoot(fs, fe, axisY);
+  drawCenterArrow(axisY);
 }
 
 static void renderMonitorMode(uint8_t BASE) {
@@ -441,6 +516,7 @@ static void renderMonitorMode(uint8_t BASE) {
     PrintSmallEx(0, SPECTRUM_Y + 5, POS_L, C_FILL, "%s %+3u",
                  graphMeasurementNames[graphMeasurement],
                  SP_GetLastGraphValue());
+
     if (ctx->tx_state.is_active) {
       FillRect(0, LCD_HEIGHT - 8, 24, 8, C_CLEAR);
       PrintMediumEx(1, LCD_HEIGHT - 1, POS_L, C_FILL, "%u%c",
@@ -467,28 +543,31 @@ void VFO1_render(void) {
 
   if (!ctx->tx_state.last_error) {
     UI_BigFrequency(BASE, f);
+
+    PrintMediumEx(LCD_WIDTH - 1, BASE - 9, POS_R, C_FILL, mod);
+    renderChannelName(21, vfo->channel_index);
+
+    const uint32_t step = StepFrequencyTable[ctx->step];
+    PrintSmallEx(LCD_WIDTH, BASE + 6, POS_R, C_FILL, "%d.%02d", step / KHZ,
+                 step % KHZ);
+
+    renderCodes(BASE);
+    renderExtraInfo(BASE);
+    renderLootInfo();
+
+    if (gMonitorMode || ctx->tx_state.is_active) {
+      renderMonitorMode(BASE);
+    } else if (gShowFreqScale) {
+      renderFrequencyScale(BASE, f);
+    } else {
+      if (vfo->is_open || gSettings.alwaysRssi) {
+        UI_RSSIBar(BASE + 1 + 6);
+      }
+    }
   }
 
-  PrintMediumEx(LCD_WIDTH - 1, BASE - 9, POS_R, C_FILL, mod);
-  renderChannelName(21, vfo->channel_index);
-
-  const uint32_t step = StepFrequencyTable[ctx->step];
-  PrintSmallEx(LCD_WIDTH, BASE + 6, POS_R, C_FILL, "%d.%02d", step / KHZ,
-               step % KHZ);
-
-  renderCodes(BASE);
-  renderExtraInfo(BASE);
-  renderLootInfo();
-
-  if (gMonitorMode || ctx->tx_state.is_active) {
-    renderMonitorMode(BASE);
-  } else {
-    if (vfo->is_open || gSettings.alwaysRssi) {
-      UI_RSSIBar(BASE + 1 + 6);
-    }
-    if (ctx->tx_state.is_active) {
-      UI_TxBar(BASE + 1);
-    }
+  if (ctx->tx_state.is_active) {
+    UI_TxBar(BASE + 1);
   }
 
   REGSMENU_Draw();
