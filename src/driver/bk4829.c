@@ -134,7 +134,7 @@ static inline void SDA_AsInput(void) {
 }
 
 static inline uint32_t SDA_Read(void) {
-  return GPIO_IsInputPinSet(PIN_SDA) ? 1 : 0;
+  return (SDA_PORT->IDR & SDA_MASK) ? 1u : 0u;
 }
 
 static inline uint16_t scale_frequency(uint16_t freq) {
@@ -164,21 +164,23 @@ static inline void BK4819_WriteU16(uint16_t data) {
 }
 
 static uint16_t BK4819_ReadU16(void) {
-  uint16_t value = 0;
-  SDA_AsInput();
-  SHORT_DELAY();
-  SCL_Low(); // единственный явный спад → чип выставляет D15
-  DELAY_1US(); // tNXT
-  for (int i = 0; i < 16; i++) {
-    SCL_High();
-    SHORT_DELAY();
-    value = (value << 1) | SDA_Read(); // читаем в SCL HIGH
-    SCL_Low(); // спад → чип выставляет следующий бит
-    SHORT_DELAY();
-  }
-  SDA_High();
-  SDA_AsOutput();
-  return value;
+    uint16_t value = 0;
+
+    SDA_AsInput();
+    SCL_Low();
+    DELAY_1US();
+
+    for (int i = 0; i < 16; i++) {
+        SCL_High();
+        __asm volatile("nop");
+        value = (value << 1) | SDA_Read();
+        SCL_Low();
+        __asm volatile("nop");
+    }
+
+    SDA_High();
+    SDA_AsOutput();
+    return value;
 }
 
 // ============================================================================
