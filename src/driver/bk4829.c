@@ -116,57 +116,12 @@ static inline void SCL_High(void) { SCL_PORT->BSRR = SCL_MASK; }
 static inline void SDA_Low(void) { SDA_PORT->BSRR = (uint32_t)SDA_MASK << 16; }
 static inline void SDA_High(void) { SDA_PORT->BSRR = SDA_MASK; }
 
-#define SDA_WRITE_MSB8(v)                                                      \
-  (SDA_PORT->BSRR = ((v) & 0x80u) ? SDA_MASK : ((uint32_t)SDA_MASK << 16))
-
-#define SDA_WRITE_MSB16(v)                                                     \
-  (SDA_PORT->BSRR = ((v) & 0x8000u) ? SDA_MASK : ((uint32_t)SDA_MASK << 16))
-
-#define SPI_CLK_BIT_8(v)                                                       \
-  do {                                                                         \
-    SCL_Low();                                                                 \
-    SDA_WRITE_MSB8(v);                                                         \
-    SCL_High();                                                                \
-    (v) <<= 1;                                                                 \
-  } while (0)
-
-#define SPI_CLK_BIT_16(v)                                                      \
-  do {                                                                         \
-    SCL_Low();                                                                 \
-    SDA_WRITE_MSB16(v);                                                        \
-    SCL_High();                                                                \
-    (v) <<= 1;                                                                 \
-  } while (0)
-
-static inline void BK4819_WriteU8(uint8_t data) {
-  SPI_CLK_BIT_8(data);
-  SPI_CLK_BIT_8(data);
-  SPI_CLK_BIT_8(data);
-  SPI_CLK_BIT_8(data);
-  SPI_CLK_BIT_8(data);
-  SPI_CLK_BIT_8(data);
-  SPI_CLK_BIT_8(data);
-  SPI_CLK_BIT_8(data);
-}
-
-static inline void BK4819_WriteU16(uint16_t data) {
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-  SPI_CLK_BIT_16(data);
-}
+/* static inline void CS_Low(void) { GPIO_ResetOutputPin(PIN_CSN); }
+static inline void CS_High(void) { GPIO_SetOutputPin(PIN_CSN); }
+static inline void SCL_Low(void) { GPIO_ResetOutputPin(PIN_SCL); }
+static inline void SCL_High(void) { GPIO_SetOutputPin(PIN_SCL); }
+static inline void SDA_Low(void) { GPIO_ResetOutputPin(PIN_SDA); }
+static inline void SDA_High(void) { GPIO_SetOutputPin(PIN_SDA); } */
 
 static inline void SDA_AsOutput(void) {
   LL_GPIO_SetPinMode(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
@@ -188,6 +143,24 @@ static inline uint16_t scale_frequency(uint16_t freq) {
 
 static inline void SDA_WriteBit(uint32_t bit) {
   SDA_PORT->BSRR = bit ? SDA_MASK : ((uint32_t)SDA_MASK << 16);
+}
+
+static inline void BK4819_WriteU8(uint8_t data) {
+  for (unsigned i = 0; i < 8; ++i) {
+    SCL_Low();
+    SDA_WriteBit(data & 0x80u);
+    SCL_High();
+    data <<= 1;
+  }
+}
+
+static inline void BK4819_WriteU16(uint16_t data) {
+  for (unsigned i = 0; i < 16; ++i) {
+    SCL_Low();
+    SDA_WriteBit(data & 0x8000u);
+    SCL_High();
+    data <<= 1;
+  }
 }
 
 static uint16_t BK4819_ReadU16(void) {
