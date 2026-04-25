@@ -169,15 +169,15 @@ void SP_AddPoint(const Measurement *msm) {
       (msm->f + step > range->end) ? (MAX_POINTS - 1) : SP_F2X(msm->f + step);
 
   int16_t ixs, ixe;
-  if (msm->f == range->start) {
+  if (xc == 0) { // ← по пикселю, не по частоте
     ixs = 0;
-    ixe = xc + (next_xc - xc) / 2;
+    ixe = (int16_t)next_xc / 2;
   } else if (msm->f + step > range->end) {
-    ixs = spPrevXc + ((int16_t)xc - spPrevXc) / 2;
+    ixs = (int16_t)spPrevXc + ((int16_t)xc - spPrevXc) / 2;
     ixe = MAX_POINTS - 1;
   } else {
-    ixs = spPrevXc + ((int16_t)xc - spPrevXc) / 2;
-    ixe = xc + ((int16_t)next_xc - xc) / 2 - 1;
+    ixs = (int16_t)spPrevXc + ((int16_t)xc - spPrevXc) / 2;
+    ixe = (int16_t)xc + ((int16_t)next_xc - xc) / 2 - 1;
   }
 
   if (ixs > ixe) {
@@ -200,9 +200,12 @@ void SP_AddPoint(const Measurement *msm) {
       noiseHistory[xi] = msm->noise;
       glitchHistory[xi] = msm->glitch;
     }
-    if (xi + 1 > filledPoints)
-      filledPoints = xi + 1;
   }
+
+  // ← вынесли за цикл: одно сравнение вместо N
+  if ((uint8_t)ixe + 1u > filledPoints)
+    filledPoints = (uint8_t)ixe + 1;
+
   spPrevXc = xc;
 
   if (msm->rssi > spPeakRssi) {
