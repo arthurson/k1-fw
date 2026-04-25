@@ -57,9 +57,22 @@ Loot *LOOT_AddEx(uint32_t f, bool reuse) {
       return p;
     }
   }
-  if (LOOT_Size() < LOOT_SIZE_MAX) {
-    lootIndex++;
+  if (LOOT_Size() >= LOOT_SIZE_MAX) {
+    // FIFO-вытеснение: убираем самый старый незащищённый слот.
+    // whitelist/blacklist помечены пользователем — не трогаем.
+    int16_t evict = -1;
+    for (uint16_t i = 0; i < LOOT_Size(); ++i) {
+      if (!loot[i].whitelist && !loot[i].blacklist) {
+        evict = (int16_t)i;
+        break;
+      }
+    }
+    if (evict < 0) {
+      return NULL; // все слоты защищены — отказ от добавления
+    }
+    LOOT_Remove((uint16_t)evict);
   }
+  lootIndex++;
   lastTimeCheck = Now();
   loot[lootIndex] = (Loot){
       .f = f,
@@ -84,6 +97,11 @@ void LOOT_Remove(uint16_t i) {
   for (; i < LOOT_Size() - 1; ++i)
     loot[i] = loot[i + 1];
   lootIndex--;
+  // Сдвиг массива инвалидировал указатель — перепривязываем по частоте
+  if (lastActiveLootF) {
+    gLastActiveLoot = LOOT_Get(lastActiveLootF);
+    gLastActiveLootIndex = gLastActiveLoot ? LOOT_IndexOf(gLastActiveLoot) : -1;
+  }
 }
 
 void LOOT_Clear(void) {

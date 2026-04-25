@@ -94,6 +94,7 @@ static void markSettingsDirty(void) {
 
 static Band range;
 static uint32_t targetF;
+static uint32_t scanF; // курсор сканера, отдельно от msm->f (где реально мерили)
 static uint32_t delay = DELAY_DEFAULT_US;
 static bool still;
 static bool listen;
@@ -306,6 +307,7 @@ static void onStillJumpFreq(uint32_t fs, uint32_t fe) {
   (void)fe;
   targetF = fs;
   msm->f = fs;
+  scanF = fs;
   RADIO_SetParam(ctx, PARAM_FREQUENCY, fs, false);
   RADIO_ApplySettings(ctx);
 }
@@ -630,6 +632,7 @@ static void setRange(uint32_t fs, uint32_t fe) {
   range.start = fs;
   range.end = fe;
   msm->f = range.start;
+  scanF = range.start;
   SP_Init(&range);
   BANDS_RangeClear();
   BANDS_RangePush(range);
@@ -651,6 +654,7 @@ static void lockToPeak(void) {
   still = true;
   targetF = f;
   msm->f = f;
+  scanF = f;
   RADIO_SetParam(ctx, PARAM_FREQUENCY, f, false);
   RADIO_ApplySettings(ctx);
 }
@@ -773,6 +777,7 @@ static bool stillModeKey(KEY_Code_t key, Key_State_t state) {
       delta = -delta;
     targetF += delta;
     msm->f = targetF;
+    scanF = targetF;
     RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
     RADIO_ApplySettings(ctx);
     return true;
@@ -783,6 +788,7 @@ static bool stillModeKey(KEY_Code_t key, Key_State_t state) {
     int32_t delta = (key == KEY_4) ? (int32_t)step : -(int32_t)step;
     targetF += delta;
     msm->f = targetF;
+    scanF = targetF;
     RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
     RADIO_ApplySettings(ctx);
     return true;
@@ -867,6 +873,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     BANDS_RangePush(zoomed);
     range = *BANDS_RangePeek();
     msm->f = range.start;
+    scanF = range.start;
     SP_Init(&range);
     CUR_Reset();
     onRangeChanged();
@@ -878,6 +885,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     range = *BANDS_RangePeek();
     RADIO_SetParam(ctx, PARAM_STEP, range.step, true);
     msm->f = range.start;
+    scanF = range.start;
     SP_Init(&range);
     CUR_Reset();
     onRangeChanged();
@@ -897,6 +905,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
         still = true;
         listen = true;
         targetF = msm->f = gLastActiveLoot->f;
+        scanF = targetF;
         RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
         RADIO_ApplySettings(ctx);
         refreshSpectrumH();
@@ -907,6 +916,7 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
         still = true;
         listen = true;
         targetF = msm->f;
+        scanF = msm->f;
         RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
         RADIO_ApplySettings(ctx);
         refreshSpectrumH();
@@ -1082,6 +1092,7 @@ void ANALYSER_init(void) {
 
   msm = &vfo->msm;
   msm->f = range.start;
+  scanF = range.start;
   targetF = range.start;
 
   markerA = (Marker){0};
@@ -1146,14 +1157,14 @@ static void updateScan(void) {
   if (delay <= DELAY_BLOCKING_MAX_US) {
     // Быстрая ветка: блокирующая задержка до 10мс
     RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
-    RADIO_SetParam(ctx, PARAM_FREQUENCY, msm->f, false);
+    RADIO_SetParam(ctx, PARAM_FREQUENCY, scanF, false);
     RADIO_ApplySettings(ctx);
     HRTIME_DelayUs(delay);
   } else {
     // Медленная ветка: неблокирующее ожидание settle
     if (!scanAwaitingSettle) {
       RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
-      RADIO_SetParam(ctx, PARAM_FREQUENCY, msm->f, false);
+      RADIO_SetParam(ctx, PARAM_FREQUENCY, scanF, false);
       RADIO_ApplySettings(ctx);
       scanWaitUntil = Now() + (delay / 1000);
       scanAwaitingSettle = true;
@@ -1164,6 +1175,8 @@ static void updateScan(void) {
     scanAwaitingSettle = false;
   }
 
+  // Фиксируем частоту измерения ДО measure(), чтобы LOOT_Update попал в неё
+  msm->f = scanF;
   measure();
   if (!still) {
     SP_AddPoint(msm);
@@ -1173,16 +1186,17 @@ static void updateScan(void) {
   if (still)
     return;
 
-  msm->f += StepFrequencyTable[range.step];
+  // Двигаем только курсор; msm->f остаётся равной частоте последнего измерения
+  scanF += StepFrequencyTable[range.step];
 
-  if (msm->f > range.end) {
+  if (scanF > range.end) {
     wfOnSweepEnd();
     autoSqOnSweep();
     if (analyserMode == MODE_PEAKS || analyserMode == MODE_SCAN_LISTEN) {
       updatePeaks();
       updateMarkersFromPeaks();
     }
-    msm->f = range.start;
+    scanF = range.start;
     gRedrawScreen = true;
     SP_Begin();
   }
