@@ -240,22 +240,12 @@ static uint8_t ReadStatusReg(uint32_t Which) {
 // УПРОЩЕННАЯ функция WaitWIP
 static bool WaitWIP(uint32_t timeout_ms) {
   uint32_t start = Now();
-
   while (1) {
-    uint8_t Status = ReadStatusReg(0);
-
-    if ((Status & 0x01) == 0) { // WIP бит очищен
+    if ((ReadStatusReg(0) & 0x01) == 0)
       return true;
-    }
-
-    if (Now() - start > timeout_ms) {
-      return false; // Таймаут
-    }
-
-    // Короткая задержка
-    for (volatile int i = 0; i < 1000; i++) {
-      __NOP();
-    }
+    if (Now() - start > timeout_ms)
+      return false;
+    SYSTICK_DelayMs(1); // или __WFI() если SysTick тикает каждую мс
   }
 }
 
@@ -272,36 +262,25 @@ static void WriteEnable(void) {
 
 // УПРОЩЕННАЯ PageProgram без DMA (только байтовая запись)
 static bool PageProgram(uint32_t Addr, const uint8_t *Buf, uint32_t Size) {
-  // Проверка на переполнение страницы
-  if (Size > PAGE_SIZE) {
+  if (Size > PAGE_SIZE)
     Size = PAGE_SIZE;
-  }
-
-  // Не пытаемся записать 0 байт
-  if (Size == 0) {
+  if (Size == 0)
     return true;
-  }
 
   WriteEnable();
 
-  // Задержка перед началом операции
-  for (volatile int i = 0; i < 50; i++) {
-    __NOP();
-  }
-
   CS_Assert();
-  SPI_WriteByte(0x02); // Page Program command
+  SPI_WriteByte(0x02);
   WriteAddr(Addr);
 
-  gEepromWrite = true;
-  // Простая байтовая запись
-  for (uint32_t i = 0; i < Size; i++) {
-    SPI_WriteByte(Buf[i]);
+  SPI_WriteBuf(Buf, Size);
+  if (!wait_for_dma_complete(50)) {
+    CS_Release();
+    return false;
   }
 
   CS_Release();
-
-  return WaitWIP(100); // 100ms таймаут
+  return WaitWIP(100);
 }
 
 void PY25Q16_Init() {
