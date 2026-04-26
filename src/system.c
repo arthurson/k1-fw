@@ -47,6 +47,7 @@ static uint32_t toastTimer;
 static uint32_t backlightTimer;
 static uint32_t appsKeyboardTimer;
 static uint32_t intPollTimer;
+static uint32_t statusLineTimer;
 
 static void appRender(void) {
   // Подавляем все обновления дисплея (FC режим при открытом шумодаве)
@@ -577,8 +578,12 @@ void SYS_Main(void) {
     }
     if (now - secondTimer >= 1000) {
       BATTERY_UpdateBatteryInfo();
-      STATUSLINE_update();
       secondTimer = now;
+    }
+
+    if (now - statusLineTimer >= 50) {
+      STATUSLINE_update();
+      statusLineTimer = now;
     }
 
     // Watchdog-redraw: страхует случай, когда dirty-флаг не был поднят.

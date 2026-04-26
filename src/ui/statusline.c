@@ -47,29 +47,32 @@ void STATUSLINE_SetTickerText(const char *pattern, ...) {
 }
 
 void STATUSLINE_update(void) {
-  // BATTERY_UpdateBatteryInfo();
-  uint8_t level = gBatteryPercent / 10;
+  const uint32_t now = Now();
+  const uint8_t level = gBatteryPercent / 10;
+
   if (gBatteryPercent < BAT_WARN_PERCENT) {
     showBattery = !showBattery;
     gRedrawScreen = true;
   } else {
     showBattery = true;
   }
+
   if (previousBatteryLevel != level) {
     previousBatteryLevel = level;
     gRedrawScreen = true;
   }
 
   if ((bool)lastEepromWrite != gEepromWrite) {
-    lastEepromWrite = gEepromWrite ? Now() : 0;
+    lastEepromWrite = gEepromWrite ? now : 0;
     gRedrawScreen = true;
   }
-  if (lastEepromWrite && Now() - lastEepromWrite > 500) {
+
+  if (lastEepromWrite && now - lastEepromWrite > 250) {
     lastEepromWrite = gEepromWrite = false;
     gRedrawScreen = true;
   }
 
-  if (Now() - lastTickerUpdate > 5000) {
+  if (statuslineTicker[0] && now - lastTickerUpdate > 5000) {
     statuslineTicker[0] = '\0';
   }
 }

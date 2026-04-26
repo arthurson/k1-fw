@@ -74,7 +74,7 @@ static void SPI_Init() {
   InitStruct.ClockPhase = LL_SPI_PHASE_2EDGE;
   InitStruct.ClockPolarity = LL_SPI_POLARITY_HIGH;
   // DIV8 вместо DIV2 — снижаем RF помехи (24 MHz → 6 MHz)
-  InitStruct.BaudRate = LL_SPI_BAUDRATEPRESCALER_DIV8;
+  InitStruct.BaudRate = LL_SPI_BAUDRATEPRESCALER_DIV16;
   InitStruct.BitOrder = LL_SPI_MSB_FIRST;
   InitStruct.NSS = LL_SPI_NSS_SOFT;
   InitStruct.CRCCalculation = LL_SPI_CRCCALCULATION_DISABLE;
