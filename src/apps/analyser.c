@@ -57,8 +57,8 @@ typedef struct {
 
 static AnalyserSettings aSettings = {
     .magic = ANALYSER_SETTINGS_MAGIC,
-    .dbMin = -120,
-    .dbMax = -20,
+    .dbMin = -115,
+    .dbMax = -40,
     .delay = DELAY_DEFAULT_US,
     .lastRangeStart = 0,
     .lastRangeEnd = 0,
@@ -132,9 +132,8 @@ static bool showDbmTuner;
 
 // Режимы анализатора (переключаются short KEY_SIDE2, сохраняются)
 typedef enum {
-  MODE_SCAN,        // S: спектр, без listen
-  MODE_PEAKS,       // P: спектр + таблица пиков с R/N/G
-  MODE_SCAN_LISTEN, // H: спектр + listen по шумодаву + loot controls
+  MODE_SCAN,  // спектр + always-listen (шумодав форсированно открыт)
+  MODE_PEAKS, // спектр + таблица пиков с R/N/G
   MODE_COUNT,
 } AnalyserMode;
 
@@ -191,11 +190,26 @@ static void sqApplyThresholds(SquelchPreset p) {
   sq.gc = sq.go + SQ_HYSTERESIS;
 }
 
+// Отслеживаем последний режим, в котором применили шумодав. В SCAN форсируем
+// {255,0,0} только при входе — иначе тюнер R/N/G не даст крутить значения.
+static AnalyserMode lastSqMode = (AnalyserMode)0xFF;
+
 static void applySquelchPreset(void) {
-  if (ctx->squelch.value != lastSquelchLevel) {
+  if (analyserMode == MODE_SCAN) {
+    if (lastSqMode != MODE_SCAN) {
+      sqApplyThresholds((SquelchPreset){.ro = 255, .no = 0, .go = 0});
+      lastSqMode = MODE_SCAN;
+      lastSquelchLevel = SQ_LEVEL_INVALID;
+    }
+    return;
+  }
+  // Прочие режимы: пресет по уровню шумодава. При выходе из SCAN
+  // (lastSqMode == MODE_SCAN) форсируем перечитывание.
+  if (ctx->squelch.value != lastSquelchLevel || lastSqMode == MODE_SCAN) {
     lastSquelchLevel = ctx->squelch.value;
     sqEditLevel = ctx->squelch.value;
     sqApplyThresholds(GetSqlPreset(sqEditLevel, ctx->frequency));
+    lastSqMode = analyserMode;
   }
 }
 
@@ -238,8 +252,7 @@ static void updatePeaks(void) {
 
 // Нужна ли уменьшенная высота спектра (для peaks / RSSI bar)
 static bool needSplit(void) {
-  return analyserMode == MODE_PEAKS || analyserMode == MODE_SCAN_LISTEN ||
-         still || listen;
+  return analyserMode == MODE_PEAKS || still || listen;
 }
 
 // Пересчитать SPECTRUM_H под текущее состояние. SP_Init сбросит буфер —
@@ -449,8 +462,6 @@ static const char *getModeStr(void) {
   switch (analyserMode) {
   case MODE_PEAKS:
     return "PK";
-  case MODE_SCAN_LISTEN:
-    return "SL";
   default:
     return "SC";
   }
@@ -878,6 +889,7 @@ void ANALYSER_init(void) {
   settingsDirty = false;
   analyserSaveTime = 0;
   lastSquelchLevel = SQ_LEVEL_INVALID;
+  lastSqMode = (AnalyserMode)0xFF;
 
   applySquelchPreset();
 
@@ -899,6 +911,8 @@ void ANALYSER_deinit(void) {
 
 // ── Measurement / scan ─────────────────────────────────────────────────────
 
+static bool sq_was_open; // предыдущее решение — для гистерезиса
+
 static void measure(void) {
   msm->rssi = RADIO_GetRSSI(ctx);
   msm->noise = RADIO_GetNoise(ctx);
@@ -906,13 +920,19 @@ static void measure(void) {
 
   if (listen) {
     msm->open = true;
+  } else if (still && sq_was_open) {
+    // удержание: закрываем только ниже close-порогов
+    msm->open =
+        (msm->rssi > sq.rc) && (msm->noise < sq.nc) && (msm->glitch < sq.gc);
   } else {
+    // открытие: строго по open-порогам
     msm->open =
         (msm->rssi >= sq.ro) && (msm->noise < sq.no) && (msm->glitch < sq.go);
   }
-  if (gMonitorMode) {
+  if (gMonitorMode)
     msm->open = true;
-  }
+
+  sq_was_open = msm->open;
   LOOT_Update(msm);
 }
 
@@ -960,7 +980,7 @@ static void updateScan(void) {
   scanF += StepFrequencyTable[range.step];
 
   if (scanF > range.end) {
-    if (analyserMode == MODE_PEAKS || analyserMode == MODE_SCAN_LISTEN) {
+    if (analyserMode == MODE_PEAKS) {
       updatePeaks();
       updateMarkersFromPeaks();
     }
@@ -980,7 +1000,7 @@ void ANALYSER_update(void) {
     lockToPeak();
   }
 
-  bool shouldListen = still || (analyserMode == MODE_SCAN_LISTEN);
+  bool shouldListen = still || (analyserMode == MODE_SCAN);
 
   if (shouldListen) {
     if (vfo->is_open) {
@@ -1074,17 +1094,6 @@ static void renderDbmTuner(void) {
   PrintSmallEx(LCD_XCENTER, by + 18, POS_C, C_FILL, "2/8 min 3/9 max");
 }
 
-static void renderPeakMarker(VMinMax v) {
-  uint32_t f = SP_GetPeakF();
-  uint16_t rssi = SP_GetPeakRssi();
-  if (!rssi)
-    return;
-
-  SP_RenderArrow(f);
-  FSmall(0, 12 + 6, POS_L, f);
-  PrintSmallEx(0, 12 + 6 + 6, POS_L, C_FILL, "%ddBm", Rssi2DBm(rssi));
-}
-
 // Таблица маркеров под спектром (режим PEAKS): 2 строки по 6 пикс.
 // Manual-маркер метки выделяется инверсией, auto — обычная буква.
 static void renderMarkersTable(void) {
@@ -1116,13 +1125,16 @@ static void renderMarkersTable(void) {
   }
 }
 
-// Info-блок для SCAN_LISTEN: loot-инфа + RSSI bar в area под спектром
-static void renderScanListenInfo(void) {
-  uint8_t y0 = SPECTRUM_Y + SPECTRUM_H_SPLIT + SPLIT_GAP;
+// SCAN: частота последнего активного лута сверху + RSSI bar при прослушке
+static void renderScanListen(void) {
   if (gLastActiveLoot) {
-    UI_DrawLoot(gLastActiveLoot, LCD_XCENTER, y0 + 8, POS_C);
+    PrintMediumEx(LCD_XCENTER, 14, POS_C, C_FILL, "%u.%03u",
+                  gLastActiveLoot->f / 100000u,
+                  (gLastActiveLoot->f / 100u) % 1000u);
   }
-  UI_RSSIBar(y0 + 12);
+  if (vfo->is_open) {
+    UI_RSSIBar(16);
+  }
 }
 
 // RSSI bar в area под спектром (STILL/listen)
@@ -1191,17 +1203,13 @@ void ANALYSER_render(void) {
     renderStillInfo();
     renderStillRssiBar();
   } else {
-    // scan-режимы: центр — peak marker (слева сверху), area под спектром — по
-    // режиму
+    // scan-режимы: SCAN — loot freq + RSSI bar; PEAKS — таблица маркеров
     switch (analyserMode) {
     case MODE_PEAKS:
       renderMarkersTable();
       break;
-    case MODE_SCAN_LISTEN:
-      renderScanListenInfo();
-      break;
     default:
-      renderPeakMarker(v);
+      renderScanListen();
       break;
     }
     if (Now() < cursorRangeTimeout)

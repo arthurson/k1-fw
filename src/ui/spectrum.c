@@ -180,6 +180,11 @@ void SP_AddPoint(const Measurement *msm) {
         ixe = (int16_t)(xc + next_xc) / 2;            // Voronoi: floor(mid)
     }
 
+    // в широкой полосе много измерений имеют одинаковый xc и Voronoi
+    // вырождается в [xc+1..xc] (пусто) — гарантируем минимум сам xc
+    if (ixs > xc) ixs = xc;
+    if (ixe < xc) ixe = xc;
+
     ixs = _MAX(0,              ixs);
     ixe = _MIN(MAX_POINTS - 1, ixe);
 
