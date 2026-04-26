@@ -371,11 +371,11 @@ void PY25Q16_WriteBuffer(uint32_t Address, const void *pBuffer, uint32_t Size,
     written += to_write;
 
     // Небольшая задержка между страницами
-    if (written < Size) {
+    /* if (written < Size) {
       for (volatile int i = 0; i < 1000; i++) {
         __NOP();
       }
-    }
+    } */
   }
 
   last_operation_time = Now();
