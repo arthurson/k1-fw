@@ -58,6 +58,8 @@ static const KEY_Code_t g_keymap[5][4] = {
     {KEY_DOWN, KEY_3, KEY_6, KEY_9},
     {KEY_EXIT, KEY_STAR, KEY_0, KEY_F}};
 
+
+
 // ============================================================================
 // Низкоуровневое сканирование
 // ============================================================================
@@ -237,8 +239,8 @@ void keyboard_init(key_event_callback_t callback) {
 key_timing_config_t keyboard_get_default_timing(void) {
   key_timing_config_t config = {
       .debounce_ms = 1,
-      .hold_delay_ms = 100,      /* 100 ticks * 5ms = 500ms */
-      .repeat_delay_ms = 20,     /* 20 ticks * 5ms = 100ms */
+      .hold_delay_ms = 100,  /* 100 ticks * 5ms = 500ms */
+      .repeat_delay_ms = 20, /* 20 ticks * 5ms = 100ms */
       .repeat_enabled = true,
   };
   return config;

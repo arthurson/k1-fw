@@ -540,7 +540,7 @@ void SYS_Main(void) {
     SETTINGS_UpdateSave();
     // BK4819 IRQ polling: чтение REG_0C — SPI-транзакция, раньше шла каждую мс
     // впустую. 3 мс не влияют на DTMF/FSK/STE-tail (события идут медленнее).
-    if (now - intPollTimer >= 3) {
+    if ((gCurrentApp != APP_ANALYSER) && now - intPollTimer >= 3) {
       checkInt();
       intPollTimer = now;
     }
@@ -557,9 +557,9 @@ void SYS_Main(void) {
     if (gTextInputActive) {
       TEXTINPUT_update();
     }
-    if (gLootlistActive) {
+    /* if (gLootlistActive) {
       LOOTLIST_update();
-    }
+    } */
 
     APPS_update();
 

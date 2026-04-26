@@ -65,7 +65,7 @@ void BOARD_GPIO_Init(void) {
   LL_GPIO_Init(GPIOF, &InitStruct);
 
   // --- LCD SPI pins — VERY_HIGH ---
-  InitStruct.Speed = LL_GPIO_SPEED_FREQ_VERY_HIGH;
+  InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
 
   LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6); // LCD A0
   InitStruct.Pin = LL_GPIO_PIN_6;

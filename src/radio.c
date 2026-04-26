@@ -1515,7 +1515,6 @@ void RADIO_InitState(RadioState *state, uint8_t num_vfos) {
 void RADIO_CheckAndSaveVFO(RadioState *state) {
   for (uint8_t i = 0; i < state->num_vfos; ++i) {
     VFOContext *ctx = &state->vfos[i].context;
-    uint16_t num = state->vfos[i].vfo_ch_index;
 
     if (ctx->save_to_eeprom &&
         (Now() - ctx->last_save_time >= RADIO_SAVE_DELAY_MS)) {
