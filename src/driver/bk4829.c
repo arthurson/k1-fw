@@ -164,23 +164,23 @@ static inline void BK4819_WriteU16(uint16_t data) {
 }
 
 static uint16_t BK4819_ReadU16(void) {
-    uint16_t value = 0;
+  uint16_t value = 0;
 
-    SDA_AsInput();
+  SDA_AsInput();
+  SCL_Low();
+  DELAY_1US();
+
+  for (int i = 0; i < 16; i++) {
+    SCL_High();
+    __asm volatile("nop");
+    value = (value << 1) | SDA_Read();
     SCL_Low();
-    DELAY_1US();
+    __asm volatile("nop");
+  }
 
-    for (int i = 0; i < 16; i++) {
-        SCL_High();
-        __asm volatile("nop");
-        value = (value << 1) | SDA_Read();
-        SCL_Low();
-        __asm volatile("nop");
-    }
-
-    SDA_High();
-    SDA_AsOutput();
-    return value;
+  SDA_High();
+  SDA_AsOutput();
+  return value;
 }
 
 // ============================================================================
@@ -1487,10 +1487,11 @@ void BK4819_Init(void) {
 
   // Reduce SCL/SDA slew rate: real HW slow-down of GPIO edges (~20-50ns),
   // cuts high-freq harmonics of bit-bang SPI in the RF range.
-  // CSN stays default - it is not a clock line.
   LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SCL), GPIO_PIN_MASK(PIN_SCL),
                       LL_GPIO_SPEED_FREQ_MEDIUM);
   LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
+                      LL_GPIO_SPEED_FREQ_LOW);
+  LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_CSN), GPIO_PIN_MASK(PIN_CSN),
                       LL_GPIO_SPEED_FREQ_LOW);
 
   BK4819_WriteRegister(BK4819_REG_00, 0x8000);
