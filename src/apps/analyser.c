@@ -52,7 +52,8 @@ typedef struct {
   uint32_t lastRangeStart;
   uint32_t lastRangeEnd;
   uint8_t mode;
-  uint8_t _pad[3];
+  uint8_t precise;
+  uint8_t _pad[2];
 } AnalyserSettings;
 
 static AnalyserSettings aSettings = {
@@ -114,7 +115,6 @@ static Marker markerB;
 
 // Squelch tuner
 static SQL sq;
-static uint8_t sqStp = 10;
 static bool showSqTuner;
 
 typedef enum {
@@ -129,10 +129,14 @@ static uint8_t lastSquelchLevel = SQ_LEVEL_INVALID;
 
 // dBm tuner (редактирует верхнюю/нижнюю границу шкалы Y)
 static bool showDbmTuner;
+static bool preciseMode;
+
+// glitch зашкаливает при precise + delay < 25мс
+static bool glitchDisabled(void) { return preciseMode && delay < 25000; }
 
 // Режимы анализатора (переключаются short KEY_SIDE2, сохраняются)
 typedef enum {
-  MODE_SCAN,  // спектр + always-listen (шумодав форсированно открыт)
+  MODE_SCAN, // спектр + always-listen (шумодав форсированно открыт)
   MODE_PEAKS, // спектр + таблица пиков с R/N/G
   MODE_COUNT,
 } AnalyserMode;
@@ -205,6 +209,8 @@ static void applySquelchPreset(void) {
   }
   // Прочие режимы: пресет по уровню шумодава. При выходе из SCAN
   // (lastSqMode == MODE_SCAN) форсируем перечитывание.
+  if (showSqTuner) // sq под контролем пользователя
+    return;
   if (ctx->squelch.value != lastSquelchLevel || lastSqMode == MODE_SCAN) {
     lastSquelchLevel = ctx->squelch.value;
     sqEditLevel = ctx->squelch.value;
@@ -369,40 +375,18 @@ void ANALYSER_UpdateSave(void) {
   aSettings.lastRangeStart = range.start;
   aSettings.lastRangeEnd = range.end;
   aSettings.mode = (uint8_t)analyserMode;
+  aSettings.precise = preciseMode ? 1 : 0;
   analyserSettingsSave();
   settingsDirty = false;
 }
 
 // ── Auto-scale dBm ─────────────────────────────────────────────────────────
-// Двойной тап KEY_6: подогнать dBm-шкалу под min/max последнего свипа.
+// Двойной тап KEY_6: переключает авто-уровень.
 
-#define AUTOSCALE_MARGIN_DB 5
 #define KEY6_DOUBLE_TAP_MS 300
 
-static uint32_t key6PendingSingle; // время RELEASED первого тапа
-
-static void autoScaleDbm(void) {
-  uint16_t rMin = 0xFFFF;
-  uint16_t rMax = 0;
-  for (uint8_t x = 0; x < LCD_WIDTH; x++) {
-    uint16_t r = SP_GetPointRSSI(x);
-    if (r == 0)
-      continue;
-    if (r < rMin)
-      rMin = r;
-    if (r > rMax)
-      rMax = r;
-  }
-  if (rMin == 0xFFFF || rMax == 0) {
-    TOAST_Push("No data");
-    return;
-  }
-
-  int16_t dbMin = Rssi2DBm(rMin) - AUTOSCALE_MARGIN_DB;
-  int16_t dbMax = Rssi2DBm(rMax) + AUTOSCALE_MARGIN_DB;
-  applyDbmBounds(dbMin, dbMax, true);
-  TOAST_Push("Scale %d..%d", dbMin, dbMax);
-}
+static uint32_t key6PendingSingle;
+static bool autoLevelMode = false;
 
 // ── Range helpers ──────────────────────────────────────────────────────────
 
@@ -473,6 +457,8 @@ static char getOverlayChar(void) {
     return 'Q';
   if (showDbmTuner)
     return 'D';
+  if (autoLevelMode)
+    return 'A';
   return 0;
 }
 
@@ -506,38 +492,32 @@ static bool dbmTunerKey(KEY_Code_t key, Key_State_t state) {
 static bool sqTunerKey(KEY_Code_t key, Key_State_t state) {
   switch (key) {
   case KEY_1:
-  case KEY_7: {
+  case KEY_7:
     graphMeasurement = GRAPH_RSSI;
     sqEditParam = SQ_EDIT_RSSI;
-    int32_t delta = (key == KEY_1) ? sqStp : -(int32_t)sqStp;
-    sq.ro = AdjustU(sq.ro, 0, 255, delta);
+    sq.ro = AdjustU(sq.ro, 0, 255, key == KEY_1 ? 1 : -1);
     sq.rc = sq.ro > SQ_HYSTERESIS ? sq.ro - SQ_HYSTERESIS : 0;
     return true;
-  }
   case KEY_2:
-  case KEY_8: {
+  case KEY_8:
     graphMeasurement = GRAPH_NOISE;
     sqEditParam = SQ_EDIT_NOISE;
-    int32_t delta = (key == KEY_2) ? sqStp : -(int32_t)sqStp;
-    sq.no = AdjustU(sq.no, 0, 128, delta);
+    sq.no = AdjustU(sq.no, 0, 128, key == KEY_2 ? 1 : -1);
     sq.nc = sq.no + SQ_HYSTERESIS;
     return true;
-  }
   case KEY_3:
   case KEY_9: {
+    if (glitchDisabled())
+      return true;
     graphMeasurement = GRAPH_GLITCH;
     sqEditParam = SQ_EDIT_GLITCH;
-    int32_t delta = (key == KEY_3) ? sqStp : -(int32_t)sqStp;
-    sq.go = AdjustU(sq.go, 0, 255, delta);
+    sq.go = AdjustU(sq.go, 0, 255, key == KEY_3 ? 1 : -1);
     sq.gc = sq.go + SQ_HYSTERESIS;
     return true;
   }
   case KEY_4:
   case KEY_6:
     setDelayUs(adjustDelay(key == KEY_4 ? 1 : -1));
-    return true;
-  case KEY_0:
-    sqStp = (sqStp >= 100) ? 1 : sqStp * 10;
     return true;
   case KEY_MENU:
     return true;
@@ -575,9 +555,19 @@ static bool stillModeKey(KEY_Code_t key, Key_State_t state) {
   }
   case KEY_SIDE1:
     if (state == KEY_LONG_PRESSED || state == KEY_LONG_PRESSED_CONT) {
-      LOOT_BlacklistLast();
+      // listen: long=whitelist (как в scan); still без listen: blacklist
+      if (listen) {
+        LOOT_WhitelistLast();
+      } else {
+        LOOT_BlacklistLast();
+      }
     } else {
-      gMonitorMode = !gMonitorMode;
+      // listen: short=blacklist (как в scan); still без listen: monitor toggle
+      if (listen) {
+        LOOT_BlacklistLast();
+      } else {
+        gMonitorMode = !gMonitorMode;
+      }
     }
     return true;
   case KEY_SIDE2:
@@ -695,8 +685,12 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
         // вход в still
         still = true;
         listen = true;
-        targetF = msm->f;
-        scanF = msm->f;
+        // Если шумодав открыт — встаём на активную частоту, не на курсор
+        // сканера
+        targetF =
+            (gLastActiveLoot && vfo->is_open) ? gLastActiveLoot->f : msm->f;
+        msm->f = targetF;
+        scanF = targetF;
         RADIO_SetParam(ctx, PARAM_FREQUENCY, targetF, false);
         RADIO_ApplySettings(ctx);
         refreshSpectrumH();
@@ -718,8 +712,8 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
     if (state == KEY_RELEASED) {
       uint32_t now = Now();
       if (key6PendingSingle && (now - key6PendingSingle) < KEY6_DOUBLE_TAP_MS) {
-        // Второй тап → autoscale
-        autoScaleDbm();
+        autoLevelMode = !autoLevelMode;
+        TOAST_Push(autoLevelMode ? "Auto level ON" : "Auto level OFF");
         key6PendingSingle = 0;
       } else {
         // Первый тап — откладываем lockToPeak до истечения double-tap окна
@@ -740,6 +734,10 @@ static bool analyzerModeKey(KEY_Code_t key, Key_State_t state) {
   case KEY_SIDE2:
     if (state == KEY_RELEASED) {
       cycleMode();
+    } else if (state == KEY_LONG_PRESSED) {
+      preciseMode = !preciseMode;
+      markSettingsDirty();
+      TOAST_Push(preciseMode ? "Precise ON" : "Precise OFF");
     }
     return true;
   case KEY_STAR:
@@ -763,15 +761,19 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
 
   if (key == KEY_2 &&
       (state == KEY_LONG_PRESSED || state == KEY_LONG_PRESSED_CONT)) {
-    setRange(range.start,
-             range.start + LCD_WIDTH * StepFrequencyTable[range.step]);
-    return true;
+    if (!showSqTuner) {
+      setRange(range.start,
+               range.start + LCD_WIDTH * StepFrequencyTable[range.step]);
+      return true;
+    }
   }
   if (key == KEY_8 &&
       (state == KEY_LONG_PRESSED || state == KEY_LONG_PRESSED_CONT)) {
-    setRange(range.start,
-             range.start + LCD_XCENTER * StepFrequencyTable[range.step]);
-    return true;
+    if (!showSqTuner) {
+      setRange(range.start,
+               range.start + LCD_XCENTER * StepFrequencyTable[range.step]);
+      return true;
+    }
   }
 
   if (ANALYSERMENU_Key(key, state))
@@ -801,8 +803,11 @@ bool ANALYSER_key(KEY_Code_t key, Key_State_t state) {
       showSqTuner = !showSqTuner;
       if (showSqTuner) {
         showDbmTuner = false;
-        sqEditLevel = ctx->squelch.value;
-        sqApplyThresholds(GetSqlPreset(sqEditLevel, ctx->frequency));
+        // Грузим пресет только если уровень сменился с прошлого открытия
+        if (ctx->squelch.value != sqEditLevel) {
+          sqEditLevel = ctx->squelch.value;
+          sqApplyThresholds(GetSqlPreset(sqEditLevel, ctx->frequency));
+        }
         sqEditParam = SQ_EDIT_RSSI;
       }
       return true;
@@ -862,6 +867,7 @@ void ANALYSER_init(void) {
 
   analyserMode =
       (aSettings.mode < MODE_COUNT) ? (AnalyserMode)aSettings.mode : MODE_SCAN;
+  preciseMode = (aSettings.precise != 0);
   peaksFound = 0;
 
   range.step = RADIO_GetParam(ctx, PARAM_STEP);
@@ -884,6 +890,8 @@ void ANALYSER_init(void) {
 
   showDbmTuner = false;
   showSqTuner = false;
+  autoLevelMode = false;
+  // preciseMode уже загружен из aSettings выше
 
   scanAwaitingSettle = false;
   settingsDirty = false;
@@ -906,6 +914,7 @@ void ANALYSER_deinit(void) {
   aSettings.lastRangeStart = range.start;
   aSettings.lastRangeEnd = range.end;
   aSettings.mode = (uint8_t)analyserMode;
+  aSettings.precise = preciseMode ? 1 : 0;
   analyserSettingsSave();
 }
 
@@ -921,24 +930,32 @@ static void measure(void) {
   if (listen) {
     msm->open = true;
   } else if (still && sq_was_open) {
-    // удержание: закрываем только ниже close-порогов
-    msm->open =
-        (msm->rssi > sq.rc) && (msm->noise < sq.nc) && (msm->glitch < sq.gc);
+    msm->open = (msm->rssi > sq.rc) && (msm->noise < sq.nc) &&
+                (glitchDisabled() || msm->glitch < sq.gc);
   } else {
-    // открытие: строго по open-порогам
-    msm->open =
-        (msm->rssi >= sq.ro) && (msm->noise < sq.no) && (msm->glitch < sq.go);
+    msm->open = (msm->rssi >= sq.ro) && (msm->noise < sq.no) &&
+                (glitchDisabled() || msm->glitch < sq.go);
   }
   if (gMonitorMode)
     msm->open = true;
 
   sq_was_open = msm->open;
   LOOT_Update(msm);
+  if (gSettings.skipGarbageFrequencies && (msm->f % 650000U == 0)) {
+    msm->open = false;
+  }
 }
 
 static void updateListening(void) {
   static uint32_t lastListenUpdate;
   if (Now() - lastListenUpdate >= SQL_DELAY) {
+    if (preciseMode && !gMonitorMode) {
+      // Без перетюнинга REG_30 не сбрасывается — делаем pulse вручную
+      uint16_t reg = BK4819_ReadRegister(BK4819_REG_30);
+      BK4819_WriteRegister(BK4819_REG_30, 0x200);
+      BK4819_WriteRegister(BK4819_REG_30, reg);
+      SYSTICK_DelayUs(delay);
+    }
     measure();
     lastListenUpdate = Now();
   }
@@ -946,15 +963,13 @@ static void updateListening(void) {
 
 static void updateScan(void) {
   if (delay <= DELAY_BLOCKING_MAX_US) {
-    // Быстрая ветка: блокирующая задержка до 10мс
-    RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
+    RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, preciseMode, false);
     RADIO_SetParam(ctx, PARAM_FREQUENCY, scanF, false);
     RADIO_ApplySettings(ctx);
     HRTIME_DelayUs(delay);
   } else {
-    // Медленная ветка: неблокирующее ожидание settle
     if (!scanAwaitingSettle) {
-      RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
+      RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, preciseMode, false);
       RADIO_SetParam(ctx, PARAM_FREQUENCY, scanF, false);
       RADIO_ApplySettings(ctx);
       scanWaitUntil = Now() + (delay / 1000);
@@ -1061,8 +1076,9 @@ static void renderBottomFreq(void) {
 static void renderSqTuner(void) {
   const char *labels[] = {"R", "N", "G"};
   uint16_t values[] = {sq.ro, sq.no, sq.go};
+  uint8_t rows = glitchDisabled() ? 2 : 3;
 
-  for (uint8_t i = 0; i < 3; i++) {
+  for (uint8_t i = 0; i < rows; i++) {
     uint8_t y = 18 + 6 * i;
     if (i == sqEditParam) {
       FillRect(LCD_WIDTH - 30, y - 5, 30, 7, C_FILL);
@@ -1110,7 +1126,6 @@ static void renderMarkersTable(void) {
     uint16_t rssi = (xp != 0xFF) ? SP_GetPointRSSI(xp) : 0;
     uint16_t n = (xp != 0xFF) ? SP_GetPointNoise(xp) : 0;
     uint16_t g = (xp != 0xFF) ? SP_GetPointGlitch(xp) : 0;
-    int16_t dbm = Rssi2DBm(rssi);
 
     uint8_t y = y0 + 5 + i * 6;
 
@@ -1120,8 +1135,13 @@ static void renderMarkersTable(void) {
     } else {
       PrintSmallEx(1, y, POS_L, C_FILL, "%c", labels[i]);
     }
-    PrintSmallEx(7, y, POS_L, C_FILL, "%u.%03u %4d %3u %3u %3u", m->f / 100000u,
-                 m->f / 100u % 1000u, dbm, rssi, n, g);
+    if (glitchDisabled()) {
+      PrintSmallEx(7, y, POS_L, C_FILL, "%u.%03u %3u %3u", m->f / 100000u,
+                   m->f / 100u % 1000u, rssi, n);
+    } else {
+      PrintSmallEx(7, y, POS_L, C_FILL, "%u.%03u %3u %3u %3u", m->f / 100000u,
+                   m->f / 100u % 1000u, rssi, n, g);
+    }
   }
 }
 
@@ -1148,8 +1168,13 @@ static void renderStillInfo(void) {
   PrintMediumEx(LCD_XCENTER, 14, POS_C, C_FILL,
                 RADIO_GetParamValueString(ctx, PARAM_FREQUENCY));
 
-  PrintSmallEx(LCD_XCENTER, 12 + 6 * 2, POS_C, C_FILL, "R%u N%u G%u", msm->rssi,
-               msm->noise, msm->glitch);
+  if (glitchDisabled()) {
+    PrintSmallEx(LCD_XCENTER, 12 + 6 * 2, POS_C, C_FILL, "R%u N%u", msm->rssi,
+                 msm->noise);
+  } else {
+    PrintSmallEx(LCD_XCENTER, 12 + 6 * 2, POS_C, C_FILL, "R%u N%u G%u",
+                 msm->rssi, msm->noise, msm->glitch);
+  }
 
   if (gMonitorMode)
     PrintSmallEx(LCD_XCENTER, 12 + 6 * 3, POS_C, C_FILL, "MONITOR");
@@ -1179,8 +1204,10 @@ static void renderUserMarker(const Marker *m, char label) {
 void ANALYSER_render(void) {
   STATUSLINE_RenderRadioSettings();
 
-  VMinMax v = {.vMin = DBm2Rssi(ANALYSERMENU_GetDbmMin()),
-               .vMax = DBm2Rssi(ANALYSERMENU_GetDbmMax())};
+  VMinMax v = autoLevelMode
+                  ? SP_GetAutoLevel()
+                  : (VMinMax){.vMin = DBm2Rssi(ANALYSERMENU_GetDbmMin()),
+                              .vMax = DBm2Rssi(ANALYSERMENU_GetDbmMax())};
   SP_Render(&range, v);
   renderBottomFreq();
 
@@ -1239,8 +1266,7 @@ void ANALYSER_render(void) {
       threshold = sq.go;
       break;
     }
-    VMinMax gv = SP_GetGraphMinMax();
-    SP_RenderLine(threshold, gv);
+    SP_RenderLine(threshold, v);
   }
 
   REGSMENU_Draw();

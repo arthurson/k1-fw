@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #ifndef LOOT_SIZE_MAX
-#define LOOT_SIZE_MAX 300
+#define LOOT_SIZE_MAX 250
 #endif
 
 extern Loot *gLastActiveLoot;

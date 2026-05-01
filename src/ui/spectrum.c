@@ -23,61 +23,16 @@ static uint8_t filledPoints;
 static Band *range;
 static uint16_t step;
 
-// fallback-границы (до первого скана)
-#define SP_DBM_MIN (-120)
-#define SP_DBM_MAX (-60)
+// fallback-границы в сырых единицах RSSI (≈ -120..-60 dBm)
+#define SP_RSSI_MIN 80
+#define SP_RSSI_MAX 200
 
-#define DBM_SPAN 40 // дБ, высота шкалы
-
-// текущие границы в дБм (пересчитываются в SP_Begin)
-static int16_t spDbmMin = SP_DBM_MIN;
-static int16_t spDbmMax = SP_DBM_MIN + DBM_SPAN;
-
-static void updateDbmFloorEma(void) {
-  if (filledPoints < 1)
-    return;
-
-  // минимальный RSSI в истории → нижняя граница шкалы
-  uint16_t minRssi = rssiHistory[0];
-  for (uint8_t i = 1; i < filledPoints; i++)
-    if (rssiHistory[i] < minRssi)
-      minRssi = rssiHistory[i];
-
-  spDbmMin = Rssi2DBm(minRssi);
-  spDbmMax = spDbmMin + DBM_SPAN;
+// RSSI → высота бара в пикселях [0..SPECTRUM_H], прямой линейный маппинг
+static uint8_t rssi2Y(uint16_t rssi, VMinMax v) {
+  if (rssi <= v.vMin) return 0;
+  if (rssi >= v.vMax) return SPECTRUM_H;
+  return (uint8_t)((uint32_t)(rssi - v.vMin) * SPECTRUM_H / (v.vMax - v.vMin));
 }
-
-// дБм → высота бара в пикселях [0..SPECTRUM_H]
-static uint8_t dbm2Y(int16_t dbm, VMinMax v) {
-  int16_t dbMin = Rssi2DBm(v.vMin);
-  int16_t dbMax = Rssi2DBm(v.vMax);
-  if (dbm <= dbMin)
-    return 0;
-  if (dbm >= dbMax)
-    return SPECTRUM_H;
-  uint8_t y = (uint8_t)((int32_t)(dbm - dbMin) * SPECTRUM_H / (dbMax - dbMin));
-  return y < 2 ? 2 : y; // слабый сигнал — минимум 2 пикселя
-}
-/* static uint8_t dbm2Y(int16_t dbm) {
-  if (dbm <= spDbmMin) return 0;
-  if (dbm >= spDbmMax) return SPECTRUM_H;
-
-  // линейно нормируем в [0 .. SPECTRUM_H²]
-  uint32_t linear = (uint32_t)(dbm - spDbmMin)
-                    * (SPECTRUM_H * SPECTRUM_H)
-                    / (spDbmMax - spDbmMin);
-
-  // целочисленный sqrt — цикл ≤ 44 итерации, ок для embedded
-  uint8_t y = 0;
-  while ((uint32_t)(y + 1) * (y + 1) <= linear) y++;
-  return y;
-} */
-/* static uint8_t dbm2Y(int16_t dbm) {
-  if (dbm <= spDbmMin) return 0;
-  if (dbm >= spDbmMax) return SPECTRUM_H;
-  return (uint8_t)((int32_t)(dbm - spDbmMin) * SPECTRUM_H
-                   / (spDbmMax - spDbmMin));
-} */
 
 // ────────────────────────────────────────────────────────────────────
 
@@ -107,17 +62,42 @@ static uint16_t spPeakRssi = 0;
 static uint32_t spPeakFDisp = 0;
 static uint16_t spPeakRssiDisp = 0;
 
+static VMinMax autoLevel = {SP_RSSI_MIN, SP_RSSI_MAX};
+
+// Пересчитывается в конце каждого свипа (вызов SP_Begin).
+// floor: минимальный RSSI истории → 2px снизу.
+// span: минимум 40 RSSI (≈20 dBм).
+static void computeAutoLevel(void) {
+  if (filledPoints < 2)
+    return;
+
+  uint16_t rMin = rssiHistory[0], rMax = rssiHistory[0];
+  for (uint8_t i = 1; i < filledPoints; i++) {
+    if (rssiHistory[i] < rMin) rMin = rssiHistory[i];
+    if (rssiHistory[i] > rMax) rMax = rssiHistory[i];
+  }
+
+  uint16_t span = rMax > rMin ? rMax - rMin : 0;
+  if (span < 40) span = 40;
+
+  // floor на 2px: vMin = rMin - 2*span/SPECTRUM_H
+  uint16_t margin = 2 * span / SPECTRUM_H;
+  uint16_t vMin = rMin > margin ? rMin - margin : 0;
+  autoLevel = (VMinMax){.vMin = vMin, .vMax = vMin + span};
+}
+
+VMinMax SP_GetAutoLevel(void) { return autoLevel; }
+
 void SP_ResetHistory(void) {
   filledPoints = 0;
   memset(rssiHistory, 0, sizeof(rssiHistory));
   memset(noiseHistory, 0, sizeof(noiseHistory));
   memset(glitchHistory, 0, sizeof(glitchHistory));
   memset(visited, 0, sizeof(visited));
-  spDbmMin = SP_DBM_MIN;
-  spDbmMax = SP_DBM_MIN + DBM_SPAN;
 }
 
 void SP_Begin(void) {
+  computeAutoLevel();
   x = 0;
   ox = UINT8_MAX;
   spPrevXc = 0;
@@ -126,7 +106,6 @@ void SP_Begin(void) {
   spPeakF = 0;
   spPeakRssi = 0;
   memset(visited, 0, sizeof(visited));
-  updateDbmFloorEma();
 }
 
 void SP_Init(Band *b) {
@@ -216,10 +195,7 @@ void SP_AddPoint(const Measurement *msm) {
 // ────────────────────────────────────────────────────────────────────
 
 VMinMax SP_GetMinMax(void) {
-  return (VMinMax){
-      .vMin = DBm2Rssi(SP_DBM_MIN),
-      .vMax = DBm2Rssi(SP_DBM_MAX),
-  };
+  return (VMinMax){.vMin = SP_RSSI_MIN, .vMax = SP_RSSI_MAX};
 }
 
 VMinMax SP_GetGraphMinMax(void) {
@@ -247,7 +223,7 @@ uint16_t SP_GetPeakRssi(void) {
 void SP_RenderMarker(uint8_t mx, VMinMax v) {
   if (mx >= filledPoints)
     return;
-  uint8_t barH = dbm2Y(Rssi2DBm(rssiHistory[mx]), v);
+  uint8_t barH = rssi2Y(rssiHistory[mx], v);
   uint8_t top = S_BOTTOM - barH;
 
   for (uint8_t y = SPECTRUM_Y + 3; y < top; y += 2)
@@ -258,18 +234,14 @@ void SP_RenderMarker(uint8_t mx, VMinMax v) {
   PutPixel(mx, SPECTRUM_Y + 2, C_INVERT);
 }
 
-// сетка 10 дБ/дел, как TinySA
-void SP_RenderDbmGrid(VMinMax v, int8_t stepDbm) {
-  int16_t dbMin = Rssi2DBm(v.vMin);
-  int16_t dbMax = Rssi2DBm(v.vMax);
-  for (int16_t dbm = (dbMin / stepDbm) * stepDbm; dbm <= dbMax;
-       dbm += stepDbm) {
-    if (dbm < dbMin)
-      continue;
-    uint8_t py = S_BOTTOM - dbm2Y(dbm, v);
+// сетка, шаг в единицах RSSI
+void SP_RenderDbmGrid(VMinMax v, uint16_t stepRssi) {
+  for (uint16_t rssi = (v.vMin / stepRssi + 1) * stepRssi; rssi < v.vMax;
+       rssi += stepRssi) {
+    uint8_t py = S_BOTTOM - rssi2Y(rssi, v);
     for (uint8_t xi = 0; xi < MAX_POINTS; xi += 4)
       DrawHLine(xi, py, 2, C_FILL);
-    PrintSmallEx(0, py - 1, POS_L, C_FILL, "%d", dbm);
+    PrintSmallEx(0, py - 1, POS_L, C_FILL, "%u", rssi);
   }
 }
 
@@ -282,7 +254,7 @@ void SP_Render(const Band *p, VMinMax v) {
 
   if (graphMeasurement == GRAPH_RSSI) {
     for (uint8_t i = 0; i < filledPoints; ++i) {
-      uint8_t yVal = dbm2Y(Rssi2DBm(rssiHistory[i]), v);
+      uint8_t yVal = rssi2Y(rssiHistory[i], v);
       DrawVLine(i, S_BOTTOM - yVal, yVal, C_FILL);
     }
   } else {
@@ -306,28 +278,26 @@ void SP_RenderArrow(uint32_t f) {
 }
 
 void SP_RenderRssi(uint16_t rssi, char *text, bool top, VMinMax v) {
-  uint8_t yVal = dbm2Y(Rssi2DBm(rssi), v);
+  uint8_t yVal = rssi2Y(rssi, v);
   DrawHLine(0, S_BOTTOM - yVal, filledPoints, C_FILL);
-  PrintSmallEx(0, S_BOTTOM - yVal + (top ? -2 : 6), POS_L, C_FILL, "%s %d",
-               text, Rssi2DBm(rssi));
+  PrintSmallEx(0, S_BOTTOM - yVal + (top ? -2 : 6), POS_L, C_FILL, "%s %u",
+               text, rssi);
 }
 
 void SP_RenderLine(uint16_t value, VMinMax v) {
-  // Используем ту же формулу, что и SP_Render: для RSSI идёт через dBm-шкалу,
-  // для NOISE/GLITCH — линейно по диапазону v. Иначе планка порога будет
-  // в одной шкале, а бары спектра — в другой.
   uint8_t yVal;
   if (graphMeasurement == GRAPH_RSSI) {
-    yVal = dbm2Y(Rssi2DBm(value), v);
+    yVal = rssi2Y(value, v);
   } else {
-    yVal = ConvertDomain(value, v.vMin, v.vMax, 0, SPECTRUM_H);
+    VMinMax rv = SP_GetGraphMinMax();  // те же границы что у SP_Render для N/G
+    yVal = ConvertDomain(value, rv.vMin, rv.vMax, 0, SPECTRUM_H);
   }
   DrawHLine(0, S_BOTTOM - yVal, filledPoints, C_INVERT);
 }
 
 void SP_RenderPoint(Measurement *m, uint8_t i, uint8_t n, Band *b, VMinMax r,
                     Color c) {
-  uint8_t yVal = dbm2Y(Rssi2DBm(m->rssi), r);
+  uint8_t yVal = rssi2Y(m->rssi, r);
   PutPixel(i, S_BOTTOM - yVal, c);
 }
 

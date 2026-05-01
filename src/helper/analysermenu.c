@@ -29,21 +29,17 @@ typedef struct {
 // Единственная точка конфигурации — добавь строку, и меню само её покажет.
 // Формат: {name, reg, shift, width, maxVal, step}
 static const RegDesc regDescs[] = {
-    /* {"DSP V", 0x37, 12, 3, 7, 1},       // REG_37<14:12> dsp voltage
-    {"vReg", 0x1A, 12, 4, 15, 1},       // REG_1A<15:12> vReg
-    {"iBit", 0x1A, 8, 4, 15, 1},        // REG_1A<11:8> iBit
-    {"pllCp", 0x1F, 8, 4, 15, 1},       // REG_1F<11:8> pll_cp */
-    {"VCO LDO", 0x1F, 12, 4, 15, 1},       // REG_1F<15:12> vco_ldo_lvl
-    {"VCO RNG", 0x1A, 5, 3, 0b111, 1},     //
-    {"VCO BND", 0x1A, 0, 5, 0b11111, 1},   //
-    {"GAftDem", 0x43, 2, 1, 1, 1},         //
-    {"BW Mode", 0x43, 4, 2, 0b11, 1},      //
-    {"RFfltBWw", 0x43, 9, 3, 0b111, 1},    //
-    {"RFfltBW", 0x43, 12, 3, 0b111, 1},    //
-    {"GltchBW", 0x47, 1, 7, 0b1111111, 1}, //
-    /* {"Bnd3E", 0x3E, 0, 15, 65535, 1000}, // REG_3E threshold
-    {"IF_C", 0x1C, 0, 0, 0, 1},          // REG_1C IF filter
-    {"IF_D", 0x1D, 0, 0, 0, 1},          // REG_1D IF filter */
+    {"VCO LDO", 0x1F, 12, 4, 15, 1},        // REG_1F<15:12> vco_ldo_lvl
+    {"vReg", 0x1A, 12, 4, 15, 1},           // REG_1A<15:12> vReg
+    {"iBit", 0x1A, 8, 4, 15, 1},            // REG_1A<11:8> iBit
+    {"pllCp", 0x1F, 0, 4, 15, 1},           //
+    {"BndSelTh", 0x3E, 0, 16, 0xFFFF, 100}, //
+                                            //
+    {"DAC DRV2", 0x37, 8, 1, 1, 1},         // REG_37<14:12> dsp voltage
+    {"RF LDO", 0x37, 9, 1, 1, 1},           // REG_37<14:12> dsp voltage
+    {"ANA LDO", 0x37, 11, 1, 1, 1},         // REG_37<14:12> dsp voltage
+    {"DSP V", 0x37, 12, 3, 7, 1},           // REG_37<14:12> dsp voltage
+    {"GltchBW", 0x47, 1, 7, 0b1111111, 1},  //
 };
 
 #define REG_COUNT ARRAY_SIZE(regDescs)
