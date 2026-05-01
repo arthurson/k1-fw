@@ -2,6 +2,7 @@
 #include "../driver/lfs.h"
 #include "../driver/uart.h"
 #include "../ui/graphics.h"
+#include <stdlib.h>
 
 // Структура BMP заголовка для 1-битного изображения
 #pragma pack(push, 1)

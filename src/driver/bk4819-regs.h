@@ -40,6 +40,7 @@ static const RegisterSpec RS_DEV = {"DEV", 0x40, 0, 0xFFF, 10};
 static const RegisterSpec RS_PEAK_RSSI = {"Peak RSSI", 0x62, 0, 0xFF, 1};
 static const RegisterSpec RS_MIC = {"MIC", 0x7D, 0, 0xF, 1};
 static const RegisterSpec RS_AVC = {"AVC", 0x4B, 5, 1, 1};
+static const RegisterSpec RS_AGC = {"AGC", 0x4A, 0, 0x7F, 1};
 /* {"Gain", BK4819_REG_13, 0, 0xFFFF, 1},
 
 {"IF", 0x3D, 0, 0xFFFF, 100},

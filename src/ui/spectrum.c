@@ -23,8 +23,18 @@ static uint8_t filledPoints;
 static Band *range;
 static uint16_t step;
 
-#define SP_DBM_MIN (-120)
-#define SP_DBM_MAX (-50)
+// fallback-границы в сырых единицах RSSI (≈ -120..-60 dBm)
+#define SP_RSSI_MIN 80
+#define SP_RSSI_MAX 200
+
+// RSSI → высота бара в пикселях [0..SPECTRUM_H], прямой линейный маппинг
+static uint8_t rssi2Y(uint16_t rssi, VMinMax v) {
+  if (rssi <= v.vMin) return 0;
+  if (rssi >= v.vMax) return SPECTRUM_H;
+  return (uint8_t)((uint32_t)(rssi - v.vMin) * SPECTRUM_H / (v.vMax - v.vMin));
+}
+
+// ────────────────────────────────────────────────────────────────────
 
 static void drawTicks(uint8_t y, uint32_t fs, uint32_t fe, uint32_t div,
                       uint8_t h) {
@@ -43,12 +53,40 @@ void UI_DrawTicks(uint8_t y, const Band *band) {
   }
 }
 
+// ────────────────────────────────────────────────────────────────────
+
 static uint8_t visited[MAX_POINTS / 8 + 1] = {0};
-static uint8_t  spPrevXc   = 0;
-static uint32_t spPeakF    = 0; // аккумулятор пика текущего свипа
+static uint8_t spPrevXc = 0;
+static uint32_t spPeakF = 0;
 static uint16_t spPeakRssi = 0;
-static uint32_t spPeakFDisp    = 0; // пик предыдущего свипа (для отображения)
+static uint32_t spPeakFDisp = 0;
 static uint16_t spPeakRssiDisp = 0;
+
+static VMinMax autoLevel = {SP_RSSI_MIN, SP_RSSI_MAX};
+
+// Пересчитывается в конце каждого свипа (вызов SP_Begin).
+// floor: минимальный RSSI истории → 2px снизу.
+// span: минимум 40 RSSI (≈20 dBм).
+static void computeAutoLevel(void) {
+  if (filledPoints < 2)
+    return;
+
+  uint16_t rMin = rssiHistory[0], rMax = rssiHistory[0];
+  for (uint8_t i = 1; i < filledPoints; i++) {
+    if (rssiHistory[i] < rMin) rMin = rssiHistory[i];
+    if (rssiHistory[i] > rMax) rMax = rssiHistory[i];
+  }
+
+  uint16_t span = rMax > rMin ? rMax - rMin : 0;
+  if (span < 40) span = 40;
+
+  // floor на 2px: vMin = rMin - 2*span/SPECTRUM_H
+  uint16_t margin = 2 * span / SPECTRUM_H;
+  uint16_t vMin = rMin > margin ? rMin - margin : 0;
+  autoLevel = (VMinMax){.vMin = vMin, .vMax = vMin + span};
+}
+
+VMinMax SP_GetAutoLevel(void) { return autoLevel; }
 
 void SP_ResetHistory(void) {
   filledPoints = 0;
@@ -59,14 +97,14 @@ void SP_ResetHistory(void) {
 }
 
 void SP_Begin(void) {
+  computeAutoLevel();
   x = 0;
   ox = UINT8_MAX;
-  spPrevXc       = 0;
-  // сохраняем пик завершённого свипа, сбрасываем аккумулятор
-  spPeakFDisp    = spPeakF;
+  spPrevXc = 0;
+  spPeakFDisp = spPeakF;
   spPeakRssiDisp = spPeakRssi;
-  spPeakF        = 0;
-  spPeakRssi     = 0;
+  spPeakF = 0;
+  spPeakRssi = 0;
   memset(visited, 0, sizeof(visited));
 }
 
@@ -78,79 +116,88 @@ void SP_Init(Band *b) {
   SP_Begin();
 }
 
+// ────────────────────────────────────────────────────────────────────
+
 uint8_t SP_F2X(uint32_t f) {
-  if (f <= range->start) return 0;
-  if (f >= range->end)   return MAX_POINTS - 1;
-  uint32_t delta  = f - range->start;
+  if (f <= range->start)
+    return 0;
+  if (f >= range->end)
+    return MAX_POINTS - 1;
+  uint32_t delta = f - range->start;
   uint32_t aRange = range->end - range->start;
-  // uint64 чтобы delta*(MAX_POINTS-1) не переполнял на больших диапазонах
   return (uint8_t)(((uint64_t)delta * (MAX_POINTS - 1) + aRange / 2) / aRange);
 }
 
 uint32_t SP_X2F(uint8_t xi) {
-  if (xi >= MAX_POINTS) xi = MAX_POINTS - 1;
-  uint32_t s = (range->end - range->start) / (MAX_POINTS - 1);
-  return range->start + (xi * s);
+  if (xi >= MAX_POINTS)
+    xi = MAX_POINTS - 1;
+  uint32_t aRange = range->end - range->start;
+  return range->start +
+         (uint32_t)(((uint64_t)xi * aRange + (MAX_POINTS - 1) / 2) /
+                    (MAX_POINTS - 1));
 }
+
+// ────────────────────────────────────────────────────────────────────
 
 #define _MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define _MAX(a, b) (((a) > (b)) ? (a) : (b))
 
 void SP_AddPoint(const Measurement *msm) {
-  uint8_t xc = SP_F2X(msm->f);
-  uint8_t next_xc =
-      (msm->f + step > range->end) ? (MAX_POINTS - 1) : SP_F2X(msm->f + step);
+    uint8_t xc      = SP_F2X(msm->f);
+    uint8_t next_xc = (msm->f + step >= range->end)   // >= вместо >
+                      ? (MAX_POINTS - 1) : SP_F2X(msm->f + step);
 
-  int16_t ixs, ixe;
-  if (msm->f == range->start) {
-    ixs = 0;
-    ixe = xc + (next_xc - xc) / 2;
-  } else if (msm->f + step > range->end) {
-    ixs = spPrevXc + ((int16_t)xc - spPrevXc) / 2;
-    ixe = MAX_POINTS - 1;
-  } else {
-    ixs = spPrevXc + ((int16_t)xc - spPrevXc) / 2;
-    ixe = xc + ((int16_t)next_xc - xc) / 2 - 1;
-  }
-
-  if (ixs > ixe) { int16_t t = ixs; ixs = ixe; ixe = t; }
-  ixs = _MAX(0, ixs);
-  ixe = _MIN(MAX_POINTS - 1, ixe);
-
-  for (uint8_t xi = (uint8_t)ixs; xi <= (uint8_t)ixe; ++xi) {
-    uint8_t byte = xi / 8, bit = xi % 8;
-    if ((visited[byte] & (1 << bit)) == 0) {
-      rssiHistory[xi] = msm->rssi;
-      noiseHistory[xi] = msm->noise;
-      glitchHistory[xi] = msm->glitch;
-      visited[byte] |= (1 << bit);
+    int16_t ixs, ixe;
+    if (xc == 0) {                                     // по пикселю, не по частоте
+        ixs = 0;
+        ixe = (int16_t)(xc + next_xc) / 2;            // Voronoi правая граница
+    } else if (msm->f + step >= range->end) {          // >= вместо >
+        ixs = (int16_t)(spPrevXc + xc) / 2 + 1;       // Voronoi левая граница
+        ixe = MAX_POINTS - 1;
     } else {
-      if (msm->rssi > rssiHistory[xi]) {
-        rssiHistory[xi] = msm->rssi;
-        noiseHistory[xi] = msm->noise;
-        glitchHistory[xi] = msm->glitch;
-      }
+        ixs = (int16_t)(spPrevXc + xc) / 2 + 1;       // Voronoi: floor(mid) + 1
+        ixe = (int16_t)(xc + next_xc) / 2;            // Voronoi: floor(mid)
     }
-    if (xi + 1 > filledPoints)
-      filledPoints = xi + 1;
-  }
-  spPrevXc = xc;
 
-  // обновляем пик по реальной частоте измерения
-  if (msm->rssi > spPeakRssi) {
-    spPeakRssi = msm->rssi;
-    spPeakF    = msm->f;
-  }
+    // в широкой полосе много измерений имеют одинаковый xc и Voronoi
+    // вырождается в [xc+1..xc] (пусто) — гарантируем минимум сам xc
+    if (ixs > xc) ixs = xc;
+    if (ixe < xc) ixe = xc;
+
+    ixs = _MAX(0,              ixs);
+    ixe = _MIN(MAX_POINTS - 1, ixe);
+
+    for (uint8_t xi = (uint8_t)ixs; xi <= (uint8_t)ixe; ++xi) {
+        uint8_t byte = xi / 8, bit = xi % 8;
+        if ((visited[byte] & (1 << bit)) == 0) {
+            rssiHistory[xi]   = msm->rssi;
+            noiseHistory[xi]  = msm->noise;
+            glitchHistory[xi] = msm->glitch;
+            visited[byte]    |= (1 << bit);
+        } else if (msm->rssi > rssiHistory[xi]) {
+            rssiHistory[xi]   = msm->rssi;
+            noiseHistory[xi]  = msm->noise;
+            glitchHistory[xi] = msm->glitch;
+        }
+    }
+
+    if ((uint8_t)ixe + 1u > filledPoints)
+        filledPoints = (uint8_t)ixe + 1;
+
+    spPrevXc = xc;
+
+    if (msm->rssi > spPeakRssi) {
+        spPeakRssi = msm->rssi;
+        spPeakF    = msm->f;
+    }
 }
+
+// ────────────────────────────────────────────────────────────────────
 
 VMinMax SP_GetMinMax(void) {
-  return (VMinMax){
-      .vMin = DBm2Rssi(SP_DBM_MIN),
-      .vMax = DBm2Rssi(SP_DBM_MAX),
-  };
+  return (VMinMax){.vMin = SP_RSSI_MIN, .vMax = SP_RSSI_MAX};
 }
 
-// Get min/max for current graph measurement type
 VMinMax SP_GetGraphMinMax(void) {
   switch (graphMeasurement) {
   case GRAPH_NOISE:
@@ -158,54 +205,70 @@ VMinMax SP_GetGraphMinMax(void) {
   case GRAPH_GLITCH:
     return (VMinMax){.vMin = 0, .vMax = 255};
   default:
-    return SP_GetMinMax();  // RSSI uses default
+    return SP_GetMinMax();
   }
 }
 
+// ────────────────────────────────────────────────────────────────────
 
-// x пика — использует тот же источник что SP_GetPeakF
 uint8_t SP_FindPeakX(void) {
   uint32_t f = SP_GetPeakF();
   return f ? SP_F2X(f) : MAX_POINTS / 2;
 }
+uint32_t SP_GetPeakF(void) { return spPeakFDisp ? spPeakFDisp : spPeakF; }
+uint16_t SP_GetPeakRssi(void) {
+  return spPeakRssiDisp ? spPeakRssiDisp : spPeakRssi;
+}
 
-uint32_t SP_GetPeakF(void)    { return spPeakFDisp    ? spPeakFDisp    : spPeakF; }
-uint16_t SP_GetPeakRssi(void) { return spPeakRssiDisp ? spPeakRssiDisp : spPeakRssi; }
-
-// маркер пика: пунктир + треугольник сверху
 void SP_RenderMarker(uint8_t mx, VMinMax v) {
-  if (mx >= filledPoints) return;
-  uint8_t barH = ConvertDomain(rssiHistory[mx], v.vMin, v.vMax, 0, SPECTRUM_H);
-  uint8_t top  = S_BOTTOM - barH;
+  if (mx >= filledPoints)
+    return;
+  uint8_t barH = rssi2Y(rssiHistory[mx], v);
+  uint8_t top = S_BOTTOM - barH;
 
-  // пунктир от верхушки бара вверх до края области
   for (uint8_t y = SPECTRUM_Y + 3; y < top; y += 2)
     PutPixel(mx, y, C_INVERT);
 
-  // треугольник вниз
-  FillRect(mx - 2, SPECTRUM_Y,     5, 1, C_INVERT);
+  FillRect(mx - 2, SPECTRUM_Y, 5, 1, C_INVERT);
   FillRect(mx - 1, SPECTRUM_Y + 1, 3, 1, C_INVERT);
-  PutPixel(mx,     SPECTRUM_Y + 2,    C_INVERT);
+  PutPixel(mx, SPECTRUM_Y + 2, C_INVERT);
 }
 
-void SP_Render(const Band *p, VMinMax v) {
-  if (p) UI_DrawTicks(S_BOTTOM, p);
-  DrawHLine(0, S_BOTTOM, MAX_POINTS, C_FILL);
-
-  // Use graph-specific min/max for Noise/Glitch
-  VMinMax rv = (graphMeasurement == GRAPH_RSSI) ? v : SP_GetGraphMinMax();
-
-  for (uint8_t i = 0; i < filledPoints; ++i) {
-    uint16_t val;
-    switch (graphMeasurement) {
-    case GRAPH_NOISE:  val = noiseHistory[i];  break;
-    case GRAPH_GLITCH: val = glitchHistory[i]; break;
-    default:           val = rssiHistory[i];   break;
-    }
-    uint8_t yVal = ConvertDomain(val, rv.vMin, rv.vMax, 0, SPECTRUM_H);
-    DrawVLine(i, S_BOTTOM - yVal, yVal, C_FILL);
+// сетка, шаг в единицах RSSI
+void SP_RenderDbmGrid(VMinMax v, uint16_t stepRssi) {
+  for (uint16_t rssi = (v.vMin / stepRssi + 1) * stepRssi; rssi < v.vMax;
+       rssi += stepRssi) {
+    uint8_t py = S_BOTTOM - rssi2Y(rssi, v);
+    for (uint8_t xi = 0; xi < MAX_POINTS; xi += 4)
+      DrawHLine(xi, py, 2, C_FILL);
+    PrintSmallEx(0, py - 1, POS_L, C_FILL, "%u", rssi);
   }
 }
+
+// ────────────────────────────────────────────────────────────────────
+
+void SP_Render(const Band *p, VMinMax v) {
+  if (p)
+    UI_DrawTicks(S_BOTTOM, p);
+  DrawHLine(0, S_BOTTOM, MAX_POINTS, C_FILL);
+
+  if (graphMeasurement == GRAPH_RSSI) {
+    for (uint8_t i = 0; i < filledPoints; ++i) {
+      uint8_t yVal = rssi2Y(rssiHistory[i], v);
+      DrawVLine(i, S_BOTTOM - yVal, yVal, C_FILL);
+    }
+  } else {
+    VMinMax rv = SP_GetGraphMinMax();
+    for (uint8_t i = 0; i < filledPoints; ++i) {
+      uint16_t val = (graphMeasurement == GRAPH_NOISE) ? noiseHistory[i]
+                                                       : glitchHistory[i];
+      uint8_t yVal = ConvertDomain(val, rv.vMin, rv.vMax, 0, SPECTRUM_H);
+      DrawVLine(i, S_BOTTOM - yVal, yVal, C_FILL);
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────
 
 void SP_RenderArrow(uint32_t f) {
   uint8_t cx = SP_F2X(f);
@@ -215,38 +278,53 @@ void SP_RenderArrow(uint32_t f) {
 }
 
 void SP_RenderRssi(uint16_t rssi, char *text, bool top, VMinMax v) {
-  uint8_t yVal = ConvertDomain(rssi, v.vMin, v.vMax, 0, SPECTRUM_H);
+  uint8_t yVal = rssi2Y(rssi, v);
   DrawHLine(0, S_BOTTOM - yVal, filledPoints, C_FILL);
-  PrintSmallEx(0, S_BOTTOM - yVal + (top ? -2 : 6), POS_L, C_FILL, "%s %d",
-               text, Rssi2DBm(rssi));
+  PrintSmallEx(0, S_BOTTOM - yVal + (top ? -2 : 6), POS_L, C_FILL, "%s %u",
+               text, rssi);
 }
 
-void SP_RenderLine(uint16_t rssi, VMinMax v) {
-  uint8_t yVal = ConvertDomain(rssi, v.vMin, v.vMax, 0, SPECTRUM_H);
+void SP_RenderLine(uint16_t value, VMinMax v) {
+  uint8_t yVal;
+  if (graphMeasurement == GRAPH_RSSI) {
+    yVal = rssi2Y(value, v);
+  } else {
+    VMinMax rv = SP_GetGraphMinMax();  // те же границы что у SP_Render для N/G
+    yVal = ConvertDomain(value, rv.vMin, rv.vMax, 0, SPECTRUM_H);
+  }
   DrawHLine(0, S_BOTTOM - yVal, filledPoints, C_INVERT);
 }
 
 void SP_RenderPoint(Measurement *m, uint8_t i, uint8_t n, Band *b, VMinMax r,
                     Color c) {
-  uint8_t yVal = ConvertDomain(m->rssi, r.vMin, r.vMax, 0, SPECTRUM_H);
+  uint8_t yVal = rssi2Y(m->rssi, r);
   PutPixel(i, S_BOTTOM - yVal, c);
 }
 
+// ────────────────────────────────────────────────────────────────────
+
 uint16_t SP_GetNoiseFloor(void) {
-  if (filledPoints < 10) return 0;
+  if (filledPoints < 10)
+    return 0;
   uint16_t temp[MAX_POINTS];
   memcpy(temp, rssiHistory, sizeof(uint16_t) * filledPoints);
   for (uint8_t i = 0; i < filledPoints - 1; i++)
     for (uint8_t j = i + 1; j < filledPoints; j++)
-      if (temp[i] > temp[j]) { uint16_t t = temp[i]; temp[i] = temp[j]; temp[j] = t; }
+      if (temp[i] > temp[j]) {
+        uint16_t t = temp[i];
+        temp[i] = temp[j];
+        temp[j] = t;
+      }
   return temp[filledPoints / 4];
 }
 
-uint16_t SP_GetRssiMax(void)         { return Max(rssiHistory, filledPoints); }
-uint16_t SP_GetPointRSSI(uint8_t i)  { return rssiHistory[i]; }
+uint16_t SP_GetRssiMax(void) { return Max(rssiHistory, filledPoints); }
+uint16_t SP_GetPointRSSI(uint8_t i) { return rssiHistory[i]; }
 uint16_t SP_GetPointNoise(uint8_t i) { return noiseHistory[i]; }
 uint16_t SP_GetPointGlitch(uint8_t i) { return glitchHistory[i]; }
-uint16_t SP_GetLastGraphValue(void)  { return rssiHistory[MAX_POINTS - 1]; }
+uint16_t SP_GetLastGraphValue(void) { return rssiHistory[MAX_POINTS - 1]; }
+
+// ────────────────────────────────────────────────────────────────────
 
 void SP_RenderGraph(uint16_t min, uint16_t max) {
   const VMinMax v = {.vMin = min, .vMax = max};
@@ -256,12 +334,14 @@ void SP_RenderGraph(uint16_t min, uint16_t max) {
   const uint8_t centerY = SPECTRUM_Y + SPECTRUM_H / 2;
   if (graphMeasurement == GRAPH_TX) {
     for (uint8_t i = 0; i < MAX_POINTS; ++i) {
-      uint8_t amp = ConvertDomain(rssiHistory[i], v.vMin, v.vMax, 0, SPECTRUM_H / 2);
+      uint8_t amp =
+          ConvertDomain(rssiHistory[i], v.vMin, v.vMax, 0, SPECTRUM_H / 2);
       DrawVLine(i, centerY - amp, amp * 2 + 1, C_FILL);
     }
   } else {
     for (uint8_t i = 1; i < MAX_POINTS; ++i) {
-      uint8_t yVal = ConvertDomain(rssiHistory[i], v.vMin, v.vMax, 0, SPECTRUM_H);
+      uint8_t yVal =
+          ConvertDomain(rssiHistory[i], v.vMin, v.vMax, 0, SPECTRUM_H);
       DrawLine(i - 1, S_BOTTOM - oVal, i, S_BOTTOM - yVal, C_FILL);
       oVal = yVal;
     }
@@ -279,34 +359,49 @@ void SP_NextGraphUnit(bool next) {
 void SP_AddGraphPoint(const Measurement *msm) {
   uint16_t v = msm->rssi;
   switch (graphMeasurement) {
-  case GRAPH_NOISE:  v = msm->noise;                break;
-  case GRAPH_GLITCH: v = msm->glitch;               break;
-  case GRAPH_SNR:    v = msm->snr;                  break;
-  case GRAPH_APRS:   v = BOARD_ADC_GetAPRS();       break;
-  case GRAPH_TX:     v = BK4819_GetVoiceAmplitude(); break;
-  default:           break;
+  case GRAPH_NOISE:
+    v = msm->noise;
+    break;
+  case GRAPH_GLITCH:
+    v = msm->glitch;
+    break;
+  case GRAPH_SNR:
+    v = msm->snr;
+    break;
+  case GRAPH_TX:
+    v = BK4819_GetVoiceAmplitude();
+    break;
+  default:
+    break;
   }
   rssiHistory[MAX_POINTS - 1] = v;
   filledPoints = MAX_POINTS;
 }
 
+// ────────────────────────────────────────────────────────────────────
+
 static void shiftEx(uint16_t *history, uint16_t n, int16_t shift) {
-  if (shift == 0) return;
+  if (shift == 0)
+    return;
   if (shift > 0) {
     while (shift-- > 0) {
-      for (int16_t i = n - 2; i >= 0; --i) history[i + 1] = history[i];
+      for (int16_t i = n - 2; i >= 0; --i)
+        history[i + 1] = history[i];
       history[0] = 0;
     }
   } else {
     while (shift++ < 0) {
-      for (int16_t i = 0; i < n - 1; ++i) history[i] = history[i + 1];
+      for (int16_t i = 0; i < n - 1; ++i)
+        history[i] = history[i + 1];
       history[MAX_POINTS - 1] = 0;
     }
   }
 }
 
-void SP_Shift(int16_t n)      { shiftEx(rssiHistory, MAX_POINTS, n); }
+void SP_Shift(int16_t n) { shiftEx(rssiHistory, MAX_POINTS, n); }
 void SP_ShiftGraph(int16_t n) { shiftEx(rssiHistory, MAX_POINTS, n); }
+
+// ────────────────────────────────────────────────────────────────────
 
 static uint8_t curX = MAX_POINTS / 2;
 static uint8_t curSbWidth = 16;
@@ -321,16 +416,31 @@ void CUR_Render(void) {
 }
 
 bool CUR_Move(bool up) {
-  if (up)  { if (curX + curSbWidth < MAX_POINTS - 4) { curX += 4; return true; } }
-  else     { if (curX - curSbWidth >= 4)              { curX -= 4; return true; } }
+  if (up) {
+    if (curX + curSbWidth < MAX_POINTS - 4) {
+      curX += 4;
+      return true;
+    }
+  } else {
+    if (curX - curSbWidth >= 4) {
+      curX -= 4;
+      return true;
+    }
+  }
   return false;
 }
 
 bool CUR_Size(bool up) {
   if (up) {
-    if (curX + curSbWidth < MAX_POINTS - 1 && curX - curSbWidth > 0) { curSbWidth++; return true; }
+    if (curX + curSbWidth < MAX_POINTS - 1 && curX - curSbWidth > 0) {
+      curSbWidth++;
+      return true;
+    }
   } else {
-    if (curSbWidth > 1) { curSbWidth--; return true; }
+    if (curSbWidth > 1) {
+      curSbWidth--;
+      return true;
+    }
   }
   return false;
 }
@@ -338,7 +448,7 @@ bool CUR_Size(bool up) {
 Band CUR_GetRange(Band *p, uint32_t step) {
   Band r = *p;
   r.start = RoundToStep(SP_X2F(curX - curSbWidth), step);
-  r.end   = RoundToStep(SP_X2F(curX + curSbWidth), step);
+  r.end = RoundToStep(SP_X2F(curX + curSbWidth), step);
   return r;
 }
 
@@ -350,3 +460,5 @@ void CUR_Reset(void) {
   curX = MAX_POINTS / 2;
   curSbWidth = 16;
 }
+
+void CUR_SetPosByFreq(uint32_t f) { curX = SP_F2X(f); }

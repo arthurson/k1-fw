@@ -9,16 +9,11 @@
 #include "systick.h"
 #include <stdint.h>
 
-static uint16_t reg30state = 0xffff;
+static uint16_t reg30_cache = 0;
+static bool reg30_cached = false;
 
-#define SHORT_DELAY()                                                          \
-  __asm volatile("nop\n nop\n nop\n nop\n nop\n"                               \
-                 "nop\n nop\n nop\n nop\n nop\n"                               \
-                 "nop\n nop\n nop\n nop\n nop\n"                               \
-                 "nop\n nop\n nop\n nop\n nop\n"                               \
-                 "nop\n nop\n nop\n nop\n")
-
-// void SHORT_DELAY() { SYSTICK_DelayUs(1); }
+#define SHORT_DELAY() __asm volatile("")
+#define DELAY_1US() __asm volatile("nop\nnop\nnop\nnop\nnop\n")
 
 // ============================================================================
 // Constants
@@ -89,183 +84,204 @@ static const AgcConfig AGC_FAST = {0, 32, 50};
 static uint16_t gGpioOutState = 0x9000;
 static uint8_t gSelectedFilter = 255;
 static ModulationType gLastModulation = 255;
+static uint16_t gFreqCacheLow = 0xFFFF;  // invalidated
+static uint16_t gFreqCacheHigh = 0xFFFF; // invalidated
+// Write-through cache for frequently RMW registers
+static uint16_t gRegCache_43 = 0xFFFF; // REG_43 filter BW
+static uint16_t gRegCache_47 = 0xFFFF; // REG_47 AF mode
+static uint16_t gRegCache_7E = 0xFFFF; // REG_7E AGC
+static uint16_t gRegCache_73 = 0xFFFF; // REG_73 AFC
 
 // ============================================================================
-// Low-Level GPIO and SPI Operations
+// SPI (bit-bang)
 // ============================================================================
+
 #define PIN_CSN GPIO_MAKE_PIN(GPIOF, LL_GPIO_PIN_9)
 #define PIN_SCL GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_8)
 #define PIN_SDA GPIO_MAKE_PIN(GPIOB, LL_GPIO_PIN_9)
+
+#define CS_PORT GPIO_PORT(PIN_CSN)
+#define CS_MASK GPIO_PIN_MASK(PIN_CSN)
+#define SCL_PORT GPIO_PORT(PIN_SCL)
+#define SCL_MASK GPIO_PIN_MASK(PIN_SCL)
+#define SDA_PORT GPIO_PORT(PIN_SDA)
+#define SDA_MASK GPIO_PIN_MASK(PIN_SDA)
+
+static inline void CS_Low(void) { CS_PORT->BSRR = (uint32_t)CS_MASK << 16; }
+static inline void CS_High(void) { CS_PORT->BSRR = CS_MASK; }
+
+static inline void SCL_Low(void) { SCL_PORT->BSRR = (uint32_t)SCL_MASK << 16; }
+static inline void SCL_High(void) { SCL_PORT->BSRR = SCL_MASK; }
+
+static inline void SDA_Low(void) { SDA_PORT->BSRR = (uint32_t)SDA_MASK << 16; }
+static inline void SDA_High(void) { SDA_PORT->BSRR = SDA_MASK; }
+
+/* static inline void CS_Low(void) { GPIO_ResetOutputPin(PIN_CSN); }
+static inline void CS_High(void) { GPIO_SetOutputPin(PIN_CSN); }
+static inline void SCL_Low(void) { GPIO_ResetOutputPin(PIN_SCL); }
+static inline void SCL_High(void) { GPIO_SetOutputPin(PIN_SCL); }
+static inline void SDA_Low(void) { GPIO_ResetOutputPin(PIN_SDA); }
+static inline void SDA_High(void) { GPIO_SetOutputPin(PIN_SDA); } */
+
+static inline void SDA_AsOutput(void) {
+  LL_GPIO_SetPinMode(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
+                     LL_GPIO_MODE_OUTPUT);
+}
+
+static inline void SDA_AsInput(void) {
+  LL_GPIO_SetPinMode(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
+                     LL_GPIO_MODE_INPUT);
+}
+
+static inline uint32_t SDA_Read(void) {
+  return (SDA_PORT->IDR & SDA_MASK) ? 1u : 0u;
+}
+
+static inline uint16_t scale_frequency(uint16_t freq) {
+  return (((uint32_t)freq * 1353245u) + (1u << 16)) >> 17;
+}
+
+static inline void SDA_WriteBit(uint32_t bit) {
+  SDA_PORT->BSRR = bit ? SDA_MASK : ((uint32_t)SDA_MASK << 16);
+}
+
+static inline void BK4819_WriteU8(uint8_t data) {
+  for (unsigned i = 0; i < 8; ++i) {
+    SCL_Low();
+    SDA_WriteBit(data & 0x80u);
+    SCL_High();
+    data <<= 1;
+  }
+}
+
+static inline void BK4819_WriteU16(uint16_t data) {
+  for (unsigned i = 0; i < 16; ++i) {
+    SCL_Low();
+    SDA_WriteBit(data & 0x8000u);
+    SCL_High();
+    data <<= 1;
+  }
+}
+
+static uint16_t BK4819_ReadU16(void) {
+  uint16_t value = 0;
+
+  SDA_AsInput();
+  SCL_Low();
+  DELAY_1US();
+
+  for (int i = 0; i < 16; i++) {
+    SCL_High();
+    __asm volatile("nop");
+    value = (value << 1) | SDA_Read();
+    SCL_Low();
+    __asm volatile("nop");
+  }
+
+  SDA_High();
+  SDA_AsOutput();
+  return value;
+}
 
 // ============================================================================
 // Register Access
 // ============================================================================
 
-static inline void CS_Assert() { GPIO_ResetOutputPin(PIN_CSN); }
-
-static inline void CS_Release() { GPIO_SetOutputPin(PIN_CSN); }
-
-static inline void SCL_Reset() { GPIO_ResetOutputPin(PIN_SCL); }
-
-static inline void SCL_Set() { GPIO_SetOutputPin(PIN_SCL); }
-
-static inline void SDA_Reset() { GPIO_ResetOutputPin(PIN_SDA); }
-
-static inline void SDA_Set() { GPIO_SetOutputPin(PIN_SDA); }
-
-static inline void SDA_SetDir(bool Output) {
-  LL_GPIO_SetPinMode(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
-                     Output ? LL_GPIO_MODE_OUTPUT : LL_GPIO_MODE_INPUT);
-}
-
-static inline uint32_t SDA_ReadInput() {
-  return GPIO_IsInputPinSet(PIN_SDA) ? 1 : 0;
-}
-
-static inline uint16_t scale_frequency(uint16_t freq) {
-  return (((uint32_t)freq * 1353245u) + (1u << 16)) >> 17; // with rounding
-}
-
-static uint8_t BK_SPI_Transfer8(uint8_t data) {
-  while (!LL_SPI_IsActiveFlag_TXE(SPI1))
-    ;
-  LL_SPI_TransmitData8(SPI1, data);
-  while (!LL_SPI_IsActiveFlag_RXNE(SPI1))
-    ;
-  return LL_SPI_ReceiveData8(SPI1);
-}
-
-static uint16_t BK_SPI_Transfer16(void) {
-  uint16_t value = 0;
-  value = BK_SPI_Transfer8(0x00) << 8;
-  value |= BK_SPI_Transfer8(0x00);
-  return value;
-}
-
-static uint16_t BK4819_ReadU16(void) {
-  unsigned int i;
-  uint16_t Value;
-
-  SDA_SetDir(false);
-  SHORT_DELAY();
-  Value = 0;
-  for (i = 0; i < 16; i++) {
-    Value <<= 1;
-    Value |= SDA_ReadInput();
-    SCL_Set();
-    SHORT_DELAY();
-    SCL_Reset();
-    SHORT_DELAY();
+static inline void _UpdateRegCache(BK4819_REGISTER_t reg, uint16_t data) {
+  switch (reg) {
+  case BK4819_REG_43:
+    gRegCache_43 = data;
+    break;
+  case BK4819_REG_47:
+    gRegCache_47 = data;
+    break;
+  case BK4819_REG_7E:
+    gRegCache_7E = data;
+    break;
+  case 0x73:
+    gRegCache_73 = data;
+    break;
+  default:
+    break;
   }
-  SDA_SetDir(true);
+}
 
-  return Value;
+static inline uint16_t _ReadRegCached(BK4819_REGISTER_t reg) {
+  switch (reg) {
+  case BK4819_REG_43:
+    if (gRegCache_43 != 0xFFFF)
+      return gRegCache_43;
+    break;
+  case BK4819_REG_47:
+    if (gRegCache_47 != 0xFFFF)
+      return gRegCache_47;
+    break;
+  case BK4819_REG_7E:
+    if (gRegCache_7E != 0xFFFF)
+      return gRegCache_7E;
+    break;
+  case 0x73:
+    if (gRegCache_73 != 0xFFFF)
+      return gRegCache_73;
+    break;
+  default:
+    break;
+  }
+  return BK4819_ReadRegister(reg);
 }
 
 uint16_t BK4819_ReadRegister(BK4819_REGISTER_t reg) {
-  if (reg == BK4819_REG_30 && reg30state != 0xffff) {
-    return reg30state;
-  }
+  if (reg == BK4819_REG_30 && reg30_cached)
+    return reg30_cache;
+
+  uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  // printf("R R 0x%x\n", reg);
-  uint16_t Value;
 
-  CS_Release();
-  SCL_Reset();
-
+  CS_High();
   SHORT_DELAY();
+  CS_Low();
 
-  CS_Assert();
-  BK4819_WriteU8(reg | 0x80);
-  Value = BK4819_ReadU16();
-  CS_Release();
+  BK4819_WriteU8(reg | 0x80); // выходим с SCL=HIGH
+  uint16_t value = BK4819_ReadU16();
 
-  SHORT_DELAY();
+  CS_High();
+  SCL_High();
+  SDA_High();
 
-  SCL_Set();
-  SDA_Set();
-  __enable_irq();
-
-  return Value;
+  __set_PRIMASK(primask);
+  return value;
 }
 
-void BK4819_WriteRegister(BK4819_REGISTER_t reg, uint16_t Data) {
-  // printf("W R 0x%x\n", reg);
+void BK4819_WriteRegister(BK4819_REGISTER_t reg, uint16_t data) {
   if (reg == BK4819_REG_30) {
-    reg30state = Data;
+    reg30_cache = data;
+    reg30_cached = true;
   }
+  _UpdateRegCache(reg, data);
+
+  uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  CS_Release();
-  SCL_Reset();
 
+  CS_High();
   SHORT_DELAY();
+  CS_Low();
 
-  CS_Assert();
   BK4819_WriteU8(reg);
+  BK4819_WriteU16(data); // оба заканчиваются SCL=HIGH
 
-  SHORT_DELAY();
+  CS_High();
+  SCL_High();
+  SDA_High();
 
-  BK4819_WriteU16(Data);
-
-  SHORT_DELAY();
-
-  CS_Release();
-
-  SHORT_DELAY();
-
-  SCL_Set();
-  SDA_Set();
-  __enable_irq();
-}
-
-void BK4819_WriteU8(uint8_t Data) {
-  unsigned int i;
-
-  SCL_Reset();
-  for (i = 0; i < 8; i++) {
-    if ((Data & 0x80) == 0)
-      SDA_Reset();
-    else
-      SDA_Set();
-
-    SHORT_DELAY();
-    SCL_Set();
-    SHORT_DELAY();
-
-    Data <<= 1;
-
-    SCL_Reset();
-    SHORT_DELAY();
-  }
-}
-
-void BK4819_WriteU16(uint16_t Data) {
-  unsigned int i;
-
-  SCL_Reset();
-  for (i = 0; i < 16; i++) {
-    if ((Data & 0x8000) == 0)
-      SDA_Reset();
-    else
-      SDA_Set();
-
-    SHORT_DELAY();
-    SCL_Set();
-
-    Data <<= 1;
-
-    SHORT_DELAY();
-    SCL_Reset();
-    SHORT_DELAY();
-  }
+  __set_PRIMASK(primask);
 }
 
 uint16_t BK4819_GetRegValue(RegisterSpec spec) {
-  return (BK4819_ReadRegister(spec.num) >> spec.offset) & spec.mask;
+  return (_ReadRegCached(spec.num) >> spec.offset) & spec.mask;
 }
 
 void BK4819_SetRegValue(RegisterSpec spec, uint16_t value) {
-  uint16_t reg = BK4819_ReadRegister(spec.num);
+  uint16_t reg = _ReadRegCached(spec.num);
   reg &= ~(spec.mask << spec.offset);
   BK4819_WriteRegister(spec.num, reg | (value << spec.offset));
 }
@@ -328,11 +344,14 @@ uint8_t BK4819_GetAttenuation() {
     reg = BK4819_REG_14;
     break;
   }
+  static const uint8_t lna_peak[4] = {19, 16, 11, 0};
+  static const uint8_t lna_gain[8] = {24, 19, 14, 9, 6, 4, 2, 0};
+  static const uint8_t mixer_gain[4] = {8, 6, 3, 0};
+  static const uint8_t pga_gain[8] = {33, 27, 21, 15, 9, 6, 3, 0};
+
   uint16_t v = BK4819_ReadRegister(reg);
-  return (uint8_t[]){19, 16, 11, 0}[(v >> 8) & 3] +
-         (uint8_t[]){24, 19, 14, 9, 6, 4, 2, 0}[(v >> 5) & 7] +
-         (uint8_t[]){8, 6, 3, 0}[(v >> 3) & 3] +
-         (uint8_t[]){33, 27, 21, 15, 9, 6, 3, 0}[v & 7];
+  return lna_peak[(v >> 8) & 3] + lna_gain[(v >> 5) & 7] +
+         mixer_gain[(v >> 3) & 3] + pga_gain[v & 7];
 }
 
 void BK4819_SetAGC(bool fm, uint8_t gainIndex) {
@@ -343,7 +362,7 @@ void BK4819_SetAGC(bool fm, uint8_t gainIndex) {
   uint16_t reg49 =
       fm ? 0x2AB2 : (cfg->lo << 14) | (cfg->high << 7) | (cfg->low << 0);
 
-  uint16_t reg7E = BK4819_ReadRegister(BK4819_REG_7E);
+  uint16_t reg7E = _ReadRegCached(BK4819_REG_7E);
   reg7E &= ~((1 << 15) | (0b111 << 12)); // Clear AGC and index bits
   reg7E |= (!enableAgc << 15) |          // AGC fix mode
            (3u << 12) |                  // AGC fix index
@@ -413,7 +432,6 @@ void RF_SetXtal(uint8_t mode) {
   case XTAL25M6:
     BK4819_WriteRegister(0x3B, 0x2000);
     BK4819_WriteRegister(0x3C, 0x4E88);
-    BK4819_WriteRegister(0x3C, 0x4E88);
     // REG_1D the same as XTAL26M
     break;
 
@@ -460,7 +478,8 @@ inline void BK4819_SelectFilterEx(Filter filter) {
 }
 
 inline void BK4819_SelectFilter(uint32_t frequency) {
-  Filter filter = (frequency < 24000000) ? FILTER_VHF : FILTER_UHF;
+  Filter filter =
+      (frequency < SETTINGS_GetFilterBound()) ? FILTER_VHF : FILTER_UHF;
 
   BK4819_SelectFilterEx(filter);
 }
@@ -492,28 +511,20 @@ void BK4819_SetFilterBandwidth(BK4819_FilterBandwidth_t bw) {
 // ============================================================================
 
 void BK4819_SetFrequency(uint32_t freq) {
-  static uint16_t prev_low = 0;
-  static uint16_t prev_high = 0;
 
   freq += gSettings.freqCorrection;
 
   uint16_t low = freq & 0xFFFF;
   uint16_t high = (freq >> 16) & 0xFFFF;
 
-  if (low != prev_low) {
+  if (low != gFreqCacheLow) {
     BK4819_WriteRegister(BK4819_REG_38, low);
-    prev_low = low;
+    gFreqCacheLow = low;
   }
 
-  if (high != prev_high) {
-    /* if (high > 914) { // 599M
-      BK4819_WriteRegister(0x3E, 0xA037);
-    } else {
-      BK4819_WriteRegister(0x3E, 0x94c6);
-    } */
-
+  if (high != gFreqCacheHigh) {
     BK4819_WriteRegister(BK4819_REG_39, high);
-    prev_high = high;
+    gFreqCacheHigh = high;
   }
 }
 
@@ -533,7 +544,6 @@ void BK4819_TuneTo(uint32_t freq, bool precise) {
     BK4819_WriteRegister(BK4819_REG_30,
                          reg & ~(BK4819_REG_30_ENABLE_VCO_CALIB));
   }
-  // SYSTICK_DelayUs(300); // VCO stabilize time
   BK4819_WriteRegister(BK4819_REG_30, reg);
 }
 
@@ -577,9 +587,9 @@ void BK4819_SetIfMode(uint8_t mode) {
 }
 
 void BK4819_SetModulation(ModulationType type) {
-  if (gLastModulation == type) {
+  /* if (gLastModulation == type) {
     return;
-  }
+  } */
 
   if (type == MOD_BYP) {
     BK4819_EnterBypass();
@@ -587,35 +597,26 @@ void BK4819_SetModulation(ModulationType type) {
     BK4819_ExitBypass();
   }
 
-  gLastModulation = type;
-
   const bool isSsb = (type == MOD_LSB || type == MOD_USB);
 
   BK4819_SetAF(MOD_TYPE_REG47_VALUES[type]);
   BK4819_SetRegValue(RS_AFC_DIS, isSsb);
 
   if (type == MOD_WFM) {
-    BK4819_SetRegValue(RS_RF_FILT_BW, 7);
-    BK4819_SetRegValue(RS_RF_FILT_BW_WEAK, 7);
-    BK4819_SetRegValue(RS_BW_MODE, 3);
+    // Batch RF filter bandwidth registers: RF_FILT_BW=7, RF_FILT_BW_WEAK=7,
+    // BW_MODE=3 Saves 2 SPI read-modify-write cycles vs 3x SetRegValue
+    BK4819_WriteRegister(BK4819_REG_43,
+                         (7u << 12) | (7u << 9) | (3u << 4) | (1u << 3));
     BK4819_XtalSet(XTAL_0_13M);
-    // RF_SetXtal(XTAL12M8);
-  } else if (isSsb) {
-    BK4819_XtalSet(XTAL_2_26M);
   } else {
     BK4819_XtalSet(XTAL_2_26M);
-    // RF_SetXtal(XTAL26M);
   }
 
   // sound boost
   if (isSsb) {
-    BK4819_WriteRegister(0x54, 0x90D1); // default is 0x9009
-    BK4819_WriteRegister(0x55, 0x3271); // default is 0x31a9
-    BK4819_WriteRegister(0x75, 0xFC13); // default is 0xF50B
+    BK4819_WriteRegister(0x75, 0xFC13);
   } else {
-    BK4819_WriteRegister(0x54, 0x9009);
-    BK4819_WriteRegister(0x55, 0x31A9);
-    BK4819_WriteRegister(0x75, 0xF50B);
+    BK4819_WriteRegister(0x75, 0xF50B); // default
   }
 
   if (isSsb) {
@@ -626,13 +627,14 @@ void BK4819_SetModulation(ModulationType type) {
     BK4819_SetRegValue(RS_IF_F, 10923);
   }
 
-  uint16_t reg4A = BK4819_ReadRegister(0x4A);
+  uint16_t reg4A = 0x5430; // default
 
   if (isSsb || type == MOD_AM) {
-    BK4819_WriteRegister(0x4A, reg4A | 0b111111);
+    reg4A |= 0b1111111;
   } else {
-    BK4819_WriteRegister(0x4A, reg4A & ~0b111111);
+    reg4A = (reg4A & ~0b1111111) | 46;
   }
+  BK4819_WriteRegister(0x4A, reg4A);
 
   uint16_t r31 = BK4819_ReadRegister(0x31);
   if (type == MOD_AM) {
@@ -653,13 +655,13 @@ void BK4819_SetModulation(ModulationType type) {
     // Karina mod
     BK4819_WriteRegister(0x28, 1536);  // 0x0600 - noise gate для FM
     BK4819_WriteRegister(0x2C, 26210); // 0x6662 - emph/tx gain для FM
-    uint16_t reg4A = BK4819_ReadRegister(0x4A);
-    BK4819_WriteRegister(0x4A, (reg4A & ~127U) | 40);
+    // reg4A уже записан выше через (reg4A & ~0b111111) | 46,
+    // читаем его снова чтобы применить FM-специфичную маску ~127U
   } else {
     BK4819_WriteRegister(0x28, 0x0B40); // восстановить дефолт
     BK4819_WriteRegister(0x2C, 0x1822); // восстановить дефолт
-    // 0x4A уже обрабатывается выше в функции для AM/SSB
   }
+  gLastModulation = type;
 }
 
 // ============================================================================
@@ -678,15 +680,16 @@ void BK4819_SetupSquelch(SQL sq, uint8_t delayOpen, uint8_t delayClose) {
   BK4819_WriteRegister(BK4819_REG_78, (sq.ro << 8) | sq.rc);
 }
 
-void BK4819_Squelch(uint8_t sql, uint32_t freq, uint8_t openDelay, uint8_t closeDelay) {
+void BK4819_Squelch(uint8_t sql, uint32_t freq, uint8_t openDelay,
+                    uint8_t closeDelay) {
   SquelchPreset preset = GetSqlPreset(sql, freq);
   SQL sq = {
-    .ro = preset.ro,
-    .rc = preset.rc,
-    .no = preset.no,
-    .nc = preset.nc,
-    .go = preset.go,
-    .gc = preset.gc,
+      .ro = preset.ro,
+      .rc = preset.rc,
+      .no = preset.no,
+      .nc = preset.nc,
+      .go = preset.go,
+      .gc = preset.gc,
   };
   BK4819_SetupSquelch(sq, openDelay, closeDelay);
 }
@@ -805,14 +808,14 @@ static void write_dtmf_tone(uint16_t tone1, uint16_t tone2) {
 }
 
 void BK4819_PlayDTMF(char code) {
-  const struct {
+  static const struct {
     char c;
     uint16_t tone1;
     uint16_t tone2;
   } dtmf_map[] = {
       {'0', 0x25F3, 0x35E1}, {'1', 0x1C1C, 0x30C2}, {'2', 0x1C1C, 0x35E1},
       {'3', 0x1C1C, 0x3B91}, {'4', 0x1F0E, 0x30C2}, {'5', 0x1F0E, 0x35E1},
-      {'6', 0x1F0E, 0x3B91}, {'7', 0x225C, 0x30C2}, {'8', 0x225c, 0x35E1},
+      {'6', 0x1F0E, 0x3B91}, {'7', 0x225C, 0x30C2}, {'8', 0x225C, 0x35E1},
       {'9', 0x225C, 0x3B91}, {'A', 0x1C1C, 0x41DC}, {'B', 0x1F0E, 0x41DC},
       {'C', 0x225C, 0x41DC}, {'D', 0x25F3, 0x41DC}, {'*', 0x25F3, 0x30C2},
       {'#', 0x25F3, 0x3B91},
@@ -1045,7 +1048,7 @@ void BK4819_SetupPowerAmplifier(uint8_t bias, uint32_t frequency) {
 // ============================================================================
 
 void BK4819_EnterBypass(void) {
-  uint16_t reg = BK4819_ReadRegister(BK4819_REG_7E);
+  uint16_t reg = _ReadRegCached(BK4819_REG_7E);
   BK4819_WriteRegister(BK4819_REG_7E, reg & ~(0b111 << 3) & ~(0b111 << 0));
 }
 
@@ -1142,16 +1145,6 @@ void BK4819_XtalSet(XtalMode mode) {
 // AFC (Automatic Frequency Control)
 // ============================================================================
 
-/**
- * @param disable
- * @param range 0..7
- * @param speed 9..63
- */
-void _BK4819_SetAFC(bool disable, uint8_t range, uint8_t speed) {
-  BK4819_WriteRegister(0x73,
-                       0x4005 | (range << 11) | (speed << 5) | (disable << 4));
-}
-
 #define BK4819_REG_73 0x73
 #define BK4819_REG_73_DISABLE (1 << 4)
 #define BK4819_REG_73_LEVEL_MASK (0xF << 11) // Mask for bits 14:11
@@ -1166,7 +1159,7 @@ void BK4819_SetAFC(uint8_t level) {
     level = 8;
   }
 
-  uint16_t reg_val = BK4819_ReadRegister(BK4819_REG_73);
+  uint16_t reg_val = _ReadRegCached(BK4819_REG_73);
 
   reg_val &= ~(BK4819_REG_73_LEVEL_MASK | BK4819_REG_73_DISABLE);
 
@@ -1204,7 +1197,7 @@ void BK4819_SetAFCSpeed(uint8_t speed) {
     speed = 63;
   }
 
-  uint16_t reg_val = BK4819_ReadRegister(BK4819_REG_73);
+  uint16_t reg_val = _ReadRegCached(BK4819_REG_73);
 
   reg_val &= ~(63 << 5);
   reg_val |= ((63 - speed) << 5);
@@ -1231,100 +1224,61 @@ uint8_t BK4819_GetAFCSpeed(void) {
  * - TX 3kHz:  0x74
  */
 void BK4819_SetAFResponse(bool tx, bool is_3k, int8_t gain_db) {
-  // Clamp gain to -4..+4 range
   if (gain_db < -4)
     gain_db = -4;
   if (gain_db > 4)
     gain_db = 4;
 
-  uint16_t d1 = 0, d2 = 0;
+  // Index: gain_db + 4  => 0=-4dB .. 4=0dB(default) .. 8=+4dB
+  static const uint16_t tbl_3k[9] = {
+      0xda00, // -4dB
+      0xe800, // -3dB (inferred)
+      0xf200, // -2dB
+      0xfa02, // -1dB
+      0xf50b, //  0dB (default)
+      0xe61c, // +1dB
+      0xdf22, // +2dB
+      0xd42d, // +3dB
+      0xcc35, // +4dB
+  };
+  static const uint16_t tbl_300_d1[9] = {
+      0x94a9, // -4dB (inferred)
+      0x935a, // -3dB
+      0x920b, // -2dB
+      0x91c1, // -1dB
+      0x9009, //  0dB (default)
+      0x8f90, // +1dB
+      0x8f46, // +2dB
+      0x8ed8, // +3dB
+      0x8d8f, // +4dB
+  };
+  static const uint16_t tbl_300_d2[9] = {
+      0x2eee, // -4dB (inferred)
+      0x2eff, // -3dB
+      0x3010, // -2dB
+      0x3040, // -1dB
+      0x31a9, //  0dB (default)
+      0x31f3, // +1dB
+      0x31e7, // +2dB
+      0x3232, // +3dB
+      0x3359, // +4dB
+  };
+
+  const uint8_t idx = (uint8_t)(gain_db + 4);
 
   if (is_3k) {
-    // 3kHz response
-    d1 = 0xf50b; // default
-
-    switch (gain_db) {
-    case 1:
-      d1 = 0xe61c;
-      break; // +1dB
-    case 2:
-      d1 = 0xdf22;
-      break; // +2dB
-    case 3:
-      d1 = 0xd42d;
-      break; // +3dB
-    case 4:
-      d1 = 0xcc35;
-      break; // +4dB
-    case -1:
-      d1 = 0xfa02;
-      break; // -1dB
-    case -2:
-      d1 = 0xf200;
-      break; // -2dB
-    case -3:
-      d1 = 0xe800;
-      break; // -3dB (inferred)
-    case -4:
-      d1 = 0xda00;
-      break; // -4dB
-    default:
-      break; // 0dB default
-    }
-
     if (tx) {
-      BK4819_WriteRegister(0x74, d1); // TX 3kHz
+      BK4819_WriteRegister(0x74, tbl_3k[idx]); // TX 3kHz
     } else {
-      BK4819_WriteRegister(0x75, d1); // RX 3kHz
+      BK4819_WriteRegister(0x75, tbl_3k[idx]); // RX 3kHz
     }
   } else {
-    // 300Hz response
-    d1 = 0x9009; // default
-    d2 = 0x31a9; // default
-
-    switch (gain_db) {
-    case 1:
-      d1 = 0x8f90;
-      d2 = 0x31f3;
-      break; // +1dB
-    case 2:
-      d1 = 0x8f46;
-      d2 = 0x31e7;
-      break; // +2dB
-    case 3:
-      d1 = 0x8ed8;
-      d2 = 0x3232;
-      break; // +3dB
-    case 4:
-      d1 = 0x8d8f;
-      d2 = 0x3359;
-      break; // +4dB
-    case -1:
-      d1 = 0x91c1;
-      d2 = 0x3040;
-      break; // -1dB
-    case -2:
-      d1 = 0x920b;
-      d2 = 0x3010;
-      break; // -2dB
-    case -3:
-      d1 = 0x935a;
-      d2 = 0x2eff;
-      break; // -3dB
-    case -4:
-      d1 = 0x94a9;
-      d2 = 0x2eee;
-      break; // -4dB (inferred)
-    default:
-      break; // 0dB default
-    }
-
     if (tx) {
-      BK4819_WriteRegister(0x44, d1); // TX 300Hz
-      BK4819_WriteRegister(0x45, d2);
+      BK4819_WriteRegister(0x44, tbl_300_d1[idx]); // TX 300Hz
+      BK4819_WriteRegister(0x45, tbl_300_d2[idx]);
     } else {
-      BK4819_WriteRegister(0x54, d1); // RX 300Hz
-      BK4819_WriteRegister(0x55, d2);
+      BK4819_WriteRegister(0x54, tbl_300_d1[idx]); // RX 300Hz
+      BK4819_WriteRegister(0x55, tbl_300_d2[idx]);
     }
   }
 }
@@ -1414,7 +1368,7 @@ void BK4819_EnableFrequencyScanEx(FreqScanTime time) {
 }
 
 void BK4819_EnableFrequencyScanEx2(FreqScanTime time, uint16_t hz) {
-  BK4819_WriteRegister(BK4819_REG_32, (time << 14) | (hz << 1) | true);
+  BK4819_WriteRegister(BK4819_REG_32, (time << 14) | (hz << 1) | 1);
 }
 
 void BK4819_DisableFrequencyScan(void) {
@@ -1424,6 +1378,25 @@ void BK4819_DisableFrequencyScan(void) {
 void BK4819_StopScan(void) {
   BK4819_DisableFrequencyScan();
   BK4819_Idle();
+}
+
+void BK4819_SetScanFrequency(uint32_t Frequency) {
+  BK4819_SetFrequency(Frequency);
+  BK4819_WriteRegister(
+      BK4819_REG_51,
+      BK4819_REG_51_DISABLE_CxCSS | BK4819_REG_51_GPIO6_PIN2_NORMAL |
+          BK4819_REG_51_TX_CDCSS_POSITIVE | BK4819_REG_51_MODE_CDCSS |
+          BK4819_REG_51_CDCSS_23_BIT | BK4819_REG_51_1050HZ_NO_DETECTION |
+          BK4819_REG_51_AUTO_CDCSS_BW_DISABLE |
+          BK4819_REG_51_AUTO_CTCSS_BW_DISABLE);
+
+  // Калибровка VCO после установки частоты (как в BK4819_TuneTo)
+  uint16_t reg30 = BK4819_ReadRegister(BK4819_REG_30);
+  BK4819_WriteRegister(BK4819_REG_30, 0x200); // Включаем VCO калибровку
+  SYSTICK_DelayUs(300);                       // VCO stabilize time
+  BK4819_WriteRegister(BK4819_REG_30, reg30); // Восстанавливаем регистр
+
+  BK4819_RX_TurnOn();
 }
 
 // ============================================================================
@@ -1479,68 +1452,6 @@ void BK4819_Enable_AfDac_DiscMode_TxDsp(void) {
   BK4819_WriteRegister(BK4819_REG_30, 0x0302);
 }
 
-void RF_SetRxEqualizer(int8_t db_low, int8_t db_high) {
-  /* --- 300 Гц → REG 0x54, 0x55 --- */
-  if (db_low >= 4) {
-    BK4819_WriteRegister(0x54, 0x8d8f);
-    BK4819_WriteRegister(0x55, 0x3359);
-  } /* +4dB */
-  else if (db_low == 3) {
-    BK4819_WriteRegister(0x54, 0x8ed8);
-    BK4819_WriteRegister(0x55, 0x3232);
-  } /* +3dB */
-  else if (db_low == 2) {
-    BK4819_WriteRegister(0x54, 0x8f46);
-    BK4819_WriteRegister(0x55, 0x31e7);
-  } /* +2dB */
-  else if (db_low == 1) {
-    BK4819_WriteRegister(0x54, 0x8f90);
-    BK4819_WriteRegister(0x55, 0x31f3);
-  } /* +1dB */
-  else if (db_low == 0) {
-    BK4819_WriteRegister(0x54, 0x9009);
-    BK4819_WriteRegister(0x55, 0x31a9);
-  } /*  0dB */
-  else if (db_low == -1) {
-    BK4819_WriteRegister(0x54, 0x91c1);
-    BK4819_WriteRegister(0x55, 0x3040);
-  } /* -1dB */
-  else if (db_low == -2) {
-    BK4819_WriteRegister(0x54, 0x920b);
-    BK4819_WriteRegister(0x55, 0x3010);
-  } /* -2dB */
-  else {
-    BK4819_WriteRegister(0x54, 0x935a);
-    BK4819_WriteRegister(0x55, 0x2eff);
-  } /* -3dB */
-
-  /* --- 3 кГц → REG 0x75 --- */
-  if (db_high >= 4) {
-    BK4819_WriteRegister(0x75, 0xcc35);
-  } /* +4dB */
-  else if (db_high == 3) {
-    BK4819_WriteRegister(0x75, 0xd42d);
-  } /* +3dB */
-  else if (db_high == 2) {
-    BK4819_WriteRegister(0x75, 0xdf22);
-  } /* +2dB */
-  else if (db_high == 1) {
-    BK4819_WriteRegister(0x75, 0xe61c);
-  } /* +1dB */
-  else if (db_high == 0) {
-    BK4819_WriteRegister(0x75, 0xf50b);
-  } /*  0dB */
-  else if (db_high == -1) {
-    BK4819_WriteRegister(0x75, 0xfa02);
-  } /* -1dB */
-  else if (db_high == -2) {
-    BK4819_WriteRegister(0x75, 0xf200);
-  } /* -2dB */
-  else {
-    BK4819_WriteRegister(0x75, 0xda00);
-  } /* -4dB (-3dB отсутствует в драйвере) */
-}
-
 // ============================================================================
 // Initialization
 // ============================================================================
@@ -1552,10 +1463,26 @@ void BK4819_Init(void) {
   }
   gSelectedFilter = 255;
   gLastModulation = 255;
+  gFreqCacheLow = 0xFFFF; // invalidate freq cache
+  gFreqCacheHigh = 0xFFFF;
+  gRegCache_43 = 0xFFFF;
+  gRegCache_47 = 0xFFFF;
+  gRegCache_7E = 0xFFFF;
+  gRegCache_73 = 0xFFFF;
+  reg30_cached = false;
 
-  CS_Release();
-  SCL_Set();
-  SDA_Set();
+  CS_High();
+  SCL_High();
+  SDA_High();
+
+  // Reduce SCL/SDA slew rate: real HW slow-down of GPIO edges (~20-50ns),
+  // cuts high-freq harmonics of bit-bang SPI in the RF range.
+  LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SCL), GPIO_PIN_MASK(PIN_SCL),
+                      LL_GPIO_SPEED_FREQ_MEDIUM);
+  LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_SDA), GPIO_PIN_MASK(PIN_SDA),
+                      LL_GPIO_SPEED_FREQ_LOW);
+  LL_GPIO_SetPinSpeed(GPIO_PORT(PIN_CSN), GPIO_PIN_MASK(PIN_CSN),
+                      LL_GPIO_SPEED_FREQ_LOW);
 
   BK4819_WriteRegister(BK4819_REG_00, 0x8000);
   BK4819_WriteRegister(BK4819_REG_00, 0x0000);
@@ -1595,7 +1522,8 @@ void BK4819_Init(void) {
   BK4819_WriteRegister(0x1C, 0x07C0);
   BK4819_WriteRegister(0x1D, 0xE555);
   BK4819_WriteRegister(0x1E, 0x4C58);
-  BK4819_WriteRegister(0x1F, 0xC65A); // PLL CP 0:3
+  BK4819_WriteRegister(0x1F,
+                       0xC65A & ~(0b1111 << 12) | (3 << 12)); // PLL CP 0:3
 
   BK4819_WriteRegister(BK4819_REG_3E, 0x94C6);
 

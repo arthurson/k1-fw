@@ -13,6 +13,7 @@
 #include "../ui/graphics.h"
 #include "../ui/statusline.h"
 #include "apps.h"
+#include "cmdedit.h"
 
 // =============================
 // Состояние приложения
@@ -29,7 +30,7 @@ static CmdScanState cmdState = {.isActive = false,
                                 .profileNum = 1,
                                 .cmdIndex = 0,
                                 .execCount = 0,
-                                .filename = "/scans/cmd1.bin"};
+                                .filename = "/scans/cmd1.cmd"};
 
 // =============================
 // Вспомогательные функции
@@ -37,7 +38,7 @@ static CmdScanState cmdState = {.isActive = false,
 
 // Загрузить профиль по номеру
 static void LoadProfile(uint8_t num) {
-  snprintf(cmdState.filename, sizeof(cmdState.filename), "/scans/cmd%d.bin",
+  snprintf(cmdState.filename, sizeof(cmdState.filename), "/scans/cmd%d.cmd",
            num);
 
   // Закрываем предыдущий файл если был открыт
@@ -217,7 +218,8 @@ bool CMDSCAN_key(KEY_Code_t key, Key_State_t state) {
       return true;
 
     case KEY_STAR:
-      APPS_run(APP_LOOTLIST);
+      LOOTLIST_init();
+      gLootlistActive = true;
       return true;
 
     case KEY_EXIT:

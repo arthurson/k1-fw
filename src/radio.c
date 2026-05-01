@@ -25,6 +25,7 @@
 #include "inc/common.h"
 #include "inc/vfo.h"
 #include "misc.h"
+#include "radio_switch.h"
 #include "settings.h"
 #include <stdint.h>
 #include <string.h>
@@ -100,6 +101,7 @@ static const ParamDesc PARAM_DESC[PARAM_COUNT] = {
     [PARAM_AF_TX_3K] = {"TX 3K", 0, 9},
     [PARAM_DEV] = {"DEV", 0, 2550},
     [PARAM_MIC] = {"MIC", 0, 16},
+    [PARAM_AGC] = {"AGC", 0, 127},
     [PARAM_XTAL] = {"XTAL", 0, XTAL_3_38_4M + 1},
     [PARAM_SCRAMBLER] = {"SCR", 0, 10},
     [PARAM_FILTER] = {"Filter", 0, FILTER_AUTO + 1},
@@ -272,7 +274,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
         {
@@ -282,7 +284,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
         {
@@ -292,7 +294,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
         {
@@ -302,7 +304,7 @@ static void initVfoFile() {
             .step = STEP_25_0kHz,
             .squelch.value = 4,
             .mic = 8,
-            .deviation = 50,
+            .deviation = 126,
             .upconverter = 0,
         },
     };
@@ -501,16 +503,16 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
     BK4819_SetAFCSpeed(ctx->afc_speed);
     return true;
   case PARAM_AF_RX_300:
-    BK4819_SetAFResponse(false, false, ctx->af_rx_300);
+    BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
     return true;
   case PARAM_AF_RX_3K:
-    BK4819_SetAFResponse(false, true, ctx->af_rx_3k);
+    BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
     return true;
   case PARAM_AF_TX_300:
-    BK4819_SetAFResponse(true, false, ctx->af_tx_300);
+    BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
     return true;
   case PARAM_AF_TX_3K:
-    BK4819_SetAFResponse(true, true, ctx->af_tx_3k);
+    BK4819_SetAFResponse(true, true, gSettings.af_tx_3k - 4);
     return true;
   case PARAM_XTAL:
     BK4819_XtalSet(ctx->xtal);
@@ -532,6 +534,9 @@ static bool setParamBK4819(VFOContext *ctx, ParamType p) {
     return true;
   case PARAM_DEV:
     BK4819_SetRegValue(RS_DEV, ctx->dev);
+    return true;
+  case PARAM_AGC:
+    BK4819_SetRegValue(RS_AGC, ctx->agc);
     return true;
   case PARAM_UPCONVERTER:
     // Upconverter affects frequency calculation, requires retune
@@ -609,6 +614,7 @@ static bool setParamSI4732(VFOContext *ctx, ParamType p) {
   case PARAM_AF_TX_3K:
   case PARAM_DEV:
   case PARAM_MIC:
+  case PARAM_AGC:
   case PARAM_XTAL:
   case PARAM_SCRAMBLER:
   case PARAM_FILTER:
@@ -936,7 +942,7 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
       RADIO_SetParam(ctx, PARAM_AFC, 0, save_to_eeprom);
       break;
     default:
-      RADIO_SetParam(ctx, PARAM_AFC, 8, save_to_eeprom);
+      // RADIO_SetParam(ctx, PARAM_AFC, 8, save_to_eeprom);
       break;
     }
 
@@ -1023,22 +1029,33 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
     ctx->afc_speed = value;
     break;
   case PARAM_AF_RX_300:
-    ctx->af_rx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_rx_300 = value;
+    BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
+    SETTINGS_MarkDirty(SETTING_AF_RX_300);
     break;
   case PARAM_AF_RX_3K:
-    ctx->af_rx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_rx_3k = value;
+    BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
+    SETTINGS_MarkDirty(SETTING_AF_RX_3K);
     break;
   case PARAM_AF_TX_300:
-    ctx->af_tx_300 = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_tx_300 = value;
+    BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
+    SETTINGS_MarkDirty(SETTING_AF_TX_300);
     break;
   case PARAM_AF_TX_3K:
-    ctx->af_tx_3k = (int8_t)value - 4; // 0-8 -> -4..+4
+    gSettings.af_tx_3k = value;
+    BK4819_SetAFResponse(true, true, gSettings.af_tx_3k - 4);
+    SETTINGS_MarkDirty(SETTING_AF_TX_3K);
     break;
   case PARAM_DEV:
     ctx->dev = value;
     break;
   case PARAM_MIC:
     ctx->mic = value;
+    break;
+  case PARAM_AGC:
+    ctx->agc = value;
     break;
   case PARAM_XTAL:
     ctx->xtal = (XtalMode)value;
@@ -1067,6 +1084,7 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
       ctx->dirty[i] = true;
     }
     break;
+  case PARAM_FREQUENCY_FACT:
   case PARAM_TX_FREQUENCY_FACT:
   case PARAM_TX_STATE:
   case PARAM_RSSI:
@@ -1088,11 +1106,9 @@ void RADIO_SetParam(VFOContext *ctx, ParamType param, uint32_t value,
        RADIO_GetParamValueString(ctx, param), save_to_eeprom ? " [W]" : "");
 #endif /* ifdef DEBUG_PARAMS */
 
-  // TODO: make dirty only when changed.
-  // but, potential BUG: param not applied when 0
-  if (old_value != value) {
-    ctx->dirty[param] = true;
-  }
+  // Always mark dirty to ensure param is applied to hardware,
+  // even if value hasn't changed (important for initial setup)
+  ctx->dirty[param] = true;
 
   // Если значение изменилось и требуется сохранение - устанавливаем флаг
   if (save_to_eeprom && (old_value != value)) {
@@ -1159,13 +1175,13 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
   case PARAM_AFC_SPD:
     return ctx->afc_speed;
   case PARAM_AF_RX_300:
-    return ctx->af_rx_300 + 4; // -4..+4 -> 0-8
+    return gSettings.af_rx_300;
   case PARAM_AF_RX_3K:
-    return ctx->af_rx_3k + 4; // -4..+4 -> 0-8
+    return gSettings.af_rx_3k;
   case PARAM_AF_TX_300:
-    return ctx->af_tx_300 + 4; // -4..+4 -> 0-8
+    return gSettings.af_tx_300;
   case PARAM_AF_TX_3K:
-    return ctx->af_tx_3k + 4; // -4..+4 -> 0-8
+    return gSettings.af_tx_3k;
   case PARAM_XTAL:
     return ctx->xtal;
   case PARAM_SCRAMBLER:
@@ -1174,6 +1190,8 @@ uint32_t RADIO_GetParam(const VFOContext *ctx, ParamType param) {
     return ctx->filter;
   case PARAM_MIC:
     return ctx->mic;
+  case PARAM_AGC:
+    return ctx->agc;
   case PARAM_DEV:
     return ctx->dev;
   case PARAM_UPCONVERTER:
@@ -1375,9 +1393,15 @@ bool RADIO_StartTX(VFOContext *ctx) {
 
   uint8_t power = ctx->tx_state.power_level;
 
-  // HACK
+  // Properly close VFO through RXSW before TX
   vfo->is_open = false;
-  RADIO_EnableAudioRouting(gRadioState, false);
+  RXSW_SwitchTo(&gRadioState->rx_switch, ctx, false);
+
+  // Save and exit FSK mode if active (FSK conflicts with TX)
+  bool fsk_was_active = (gCurrentApp != APP_MESSENGER);
+  if (fsk_was_active) {
+    RF_ExitFsk();
+  }
 
   BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, false);
 
@@ -1428,21 +1452,18 @@ void RADIO_StopTX(VFOContext *ctx) {
   RADIO_SetupToneDetection(ctx);
   BK4819_SelectFilter(ctx->frequency);
   BK4819_TuneTo(ctx->frequency, true);
+
+  // Restore FSK mode if it was active before TX
+  if (gCurrentApp != APP_MESSENGER) {
+    RF_EnterFsk();
+  }
 }
 
 void RADIO_ToggleTX(VFOContext *ctx, bool on) {
   if (on) {
-    // HACK
-    if (gCurrentApp != APP_MESSENGER) {
-      RF_ExitFsk();
-    }
     RADIO_StartTX(ctx);
   } else {
     RADIO_StopTX(ctx);
-    // HACK
-    if (gCurrentApp != APP_MESSENGER) {
-      RF_EnterFsk();
-    }
   }
 }
 
@@ -1476,7 +1497,6 @@ void RADIO_InitState(RadioState *state, uint8_t num_vfos) {
 void RADIO_CheckAndSaveVFO(RadioState *state) {
   for (uint8_t i = 0; i < state->num_vfos; ++i) {
     VFOContext *ctx = &state->vfos[i].context;
-    uint16_t num = state->vfos[i].vfo_ch_index;
 
     if (ctx->save_to_eeprom &&
         (Now() - ctx->last_save_time >= RADIO_SAVE_DELAY_MS)) {
@@ -1686,7 +1706,7 @@ void RADIO_SaveVFOToStorage(const RadioState *state, uint8_t vfo_index,
   storage->offsetDir = ctx->tx_state.offsetDirection;
 
   storage->mic = ctx->mic;
-  storage->deviation = ctx->dev / 10;  // Convert 0-2550 to 0-255
+  storage->deviation = ctx->dev / 10; // Convert 0-2550 to 0-255
   storage->upconverter = ctx->upconverter;
 }
 
@@ -2042,7 +2062,7 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
   uint32_t v = RADIO_GetParam(ctx, param);
   switch (param) {
   case PARAM_RSSI:
-    sprintf(buf, "%+ddB", Rssi2DBm(v));
+    snprintf(buf, sizeof(buf), "%+ddB", Rssi2DBm(v));
     break;
   case PARAM_MODULATION:
     if (ctx->radio_type == RADIO_BK4819) {
@@ -2066,8 +2086,8 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
     }
     return "?(WIP)";
   case PARAM_STEP:
-    sprintf(buf, "%d.%02d", StepFrequencyTable[v] / KHZ,
-            StepFrequencyTable[v] % KHZ);
+    snprintf(buf, sizeof(buf), "%d.%02d", StepFrequencyTable[v] / KHZ,
+             StepFrequencyTable[v] % KHZ);
     break;
   case PARAM_FREQUENCY:
   case PARAM_FREQUENCY_FACT:
@@ -2077,20 +2097,21 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
     mhzToS(buf, v);
     break;
   case PARAM_RADIO:
-    sprintf(buf, "%s", RADIO_NAMES[ctx->radio_type]);
+    snprintf(buf, sizeof(buf), "%s", RADIO_NAMES[ctx->radio_type]);
     break;
   case PARAM_TX_OFFSET_DIR:
-    sprintf(buf, "%s", TX_OFFSET_NAMES[ctx->tx_state.offsetDirection]);
+    snprintf(buf, sizeof(buf), "%s",
+             TX_OFFSET_NAMES[ctx->tx_state.offsetDirection]);
     break;
   case PARAM_GAIN:
     if (ctx->radio_type == RADIO_BK4819) {
       bkAttToS(buf, v);
       break;
     } else if (ctx->radio_type == RADIO_SI4732) {
-      sprintf(buf, v == 0 ? "Auto" : "%u", v - 1);
+      snprintf(buf, sizeof(buf), v == 0 ? "Auto" : "%u", v - 1);
       break;
     }
-    sprintf(buf, "Auto");
+    snprintf(buf, sizeof(buf), "Auto");
     break;
 
   case PARAM_RX_CODE:
@@ -2114,30 +2135,31 @@ const char *RADIO_GetParamValueString(const VFOContext *ctx, ParamType param) {
   case PARAM_AFC_SPD:
   case PARAM_DEV:
   case PARAM_MIC:
+  case PARAM_AGC:
   case PARAM_XTAL:
   case PARAM_SCRAMBLER:
   case PARAM_SQUELCH_VALUE:
   case PARAM_PRECISE_F_CHANGE:
   case PARAM_COUNT:
-    sprintf(buf, "%u", v);
+    snprintf(buf, sizeof(buf), "%u", v);
     break;
   case PARAM_AF_RX_300:
   case PARAM_AF_RX_3K:
   case PARAM_AF_TX_300:
   case PARAM_AF_TX_3K:
-    sprintf(buf, "%+ddB", (int)v - 4);
+    snprintf(buf, sizeof(buf), "%+ddB", (int)v - 4);
     break;
   case PARAM_VOLUME:
-    sprintf(buf, "%u%", v);
+    snprintf(buf, sizeof(buf), "%u%%", v);
     break;
   case PARAM_SQUELCH_TYPE:
-    sprintf(buf, "%s", SQ_TYPE_NAMES[ctx->squelch.type]);
+    snprintf(buf, sizeof(buf), "%s", SQ_TYPE_NAMES[ctx->squelch.type]);
     break;
   case PARAM_UPCONVERTER:
     if (v == 0) {
-      sprintf(buf, "Off");
+      snprintf(buf, sizeof(buf), "Off");
     } else {
-      sprintf(buf, "+%d.%02d", v / MHZ, (v % MHZ) / KHZ);
+      snprintf(buf, sizeof(buf), "+%d.%02d", v / MHZ, (v % MHZ) / KHZ);
     }
     break;
   }

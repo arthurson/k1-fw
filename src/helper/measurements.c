@@ -3,6 +3,8 @@
 #include "../helper/storage.h"
 #include <stdint.h>
 
+#define SQ_HYSTERESIS 4  // Отклонение close от open thresholds
+
 static const char *SQ_FILE_VHF = "/vhf.sq";
 static const char *SQ_FILE_UHF = "/uhf.sq";
 
@@ -34,17 +36,6 @@ uint16_t DBm2Rssi(int16_t dbm) { return (dbm + 160) << 1; }
 // applied x2 to prevent initial rounding
 uint8_t Rssi2PX(uint16_t rssi, uint8_t pxMin, uint8_t pxMax) {
   return ConvertDomain(rssi - 320, -260, -120, pxMin, pxMax);
-}
-
-uint16_t Mid(const uint16_t *array, size_t n) {
-  if (array == NULL || n == 0) {
-    return 0;
-  }
-  uint32_t sum = array[0];
-  for (size_t i = 1; i < n; ++i) {
-    sum += array[i];
-  }
-  return sum / n;
 }
 
 uint16_t Min(const uint16_t *array, size_t n) {
@@ -96,7 +87,7 @@ uint32_t IncDecU(uint32_t val, uint32_t min, uint32_t max, bool inc) {
   return AdjustU(val, min, max, inc ? 1 : -1);
 }
 
-bool IsReadable(char *name) { return name[0] >= 32 && name[0] < 127; }
+bool IsReadable(const char *name) { return name[0] >= 32 && name[0] < 127; }
 
 SQL GetSql(uint8_t level) {
   SQL sq = {0, 0, 255, 255, 255, 255};
@@ -109,9 +100,9 @@ SQL GetSql(uint8_t level) {
   sq.no = ConvertDomain(level, 0, 10, 64, 12);
   sq.go = ConvertDomain(level, 0, 10, 100, 0); // was 32, 6
 
-  sq.rc = sq.ro - 4;
-  sq.nc = sq.no + 4;
-  sq.gc = sq.go + 4;
+  sq.rc = sq.ro - SQ_HYSTERESIS;
+  sq.nc = sq.no + SQ_HYSTERESIS;
+  sq.gc = sq.go + SQ_HYSTERESIS;
   return sq;
 }
 

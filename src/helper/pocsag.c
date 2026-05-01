@@ -21,7 +21,11 @@
 // -----------------------------------------------------------------------
 // BCH и построение батча — оставляем твои (без изменений)
 // -----------------------------------------------------------------------
-static uint32_t pocsag_bch_parity(uint32_t info21) { /* ... твой код ... */ }
+static uint32_t pocsag_bch_parity(uint32_t info21) {
+  // TODO: Implement BCH parity calculation
+  (void)info21;
+  return 0;
+}
 static void pocsag_build_batch(uint32_t ric, const char *msg,
                                uint32_t batch[8][2]) { /* ... твой код ... */ }
 

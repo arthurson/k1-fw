@@ -12,6 +12,8 @@
 #include "textinput.h"
 #include <string.h>
 
+static char currentFile[64] = {0};
+
 typedef enum {
   MODE_INFO,
   MODE_TX,
@@ -46,7 +48,7 @@ static void renderItem(uint16_t index, uint8_t i) {
 
   // Clear channel data before loading to prevent stale data display
   memset(&ch, 0, sizeof(CH));
-  STORAGE_LOAD("Channels.ch", chNum, &ch);
+  STORAGE_LOAD(currentFile, chNum, &ch);
 
   uint8_t y = MENU_Y + i * MENU_ITEM_H;
 
@@ -116,17 +118,17 @@ static bool action(const uint16_t index, KEY_Code_t key, Key_State_t state) {
     case KEY_1:
       if (viewMode == MODE_DELETE) {
         // Try to load existing channel, or use empty struct
-        bool loaded = STORAGE_LOAD("Channels.ch", chNum, &tmp);
+        bool loaded = STORAGE_LOAD(currentFile, chNum, &tmp);
         tmp.name[0] = '\0'; // Clear name to mark as empty
-        bool saved = STORAGE_SAVE("Channels.ch", chNum, &tmp);
+        bool saved = STORAGE_SAVE(currentFile, chNum, &tmp);
         Log("[CHLIST] Delete CH %u: loaded=%d, saved=%d", chNum, loaded, saved);
         return true;
       }
 
       if (viewMode == MODE_TX) {
-        if (STORAGE_LOAD("Channels.ch", chNum, &tmp)) {
+        if (STORAGE_LOAD(currentFile, chNum, &tmp)) {
           tmp.allowTx = !tmp.allowTx;
-          STORAGE_SAVE("Channels.ch", chNum, &tmp);
+          STORAGE_SAVE(currentFile, chNum, &tmp);
         }
         return true;
       }
@@ -173,6 +175,13 @@ static Menu chListMenu = {
     .render_item = renderItem, .itemHeight = MENU_ITEM_H, .action = action};
 
 void CHLIST_init() {
+  // Set current file: use opened file or default
+  if (gOpenedFile[0] != '\0') {
+    strncpy(currentFile, gOpenedFile, sizeof(currentFile) - 1);
+  } else {
+    strcpy(currentFile, "Channels.ch");
+  }
+
   /* if (gChSaveMode) {
     gChListFilter = 1 << gChEd.meta.type | (1 << TYPE_EMPTY);
   }
@@ -186,16 +195,10 @@ void CHLIST_init() {
   // chListMenu.num_items = gScanlistSize;
   chListMenu.num_items = 4096;
   MENU_Init(&chListMenu);
-  // TODO: set menu index
-  /* if (gChListFilter == TYPE_FILTER_BAND ||
-      gChListFilter == TYPE_FILTER_BAND_SAVE) {
-    channelIndex = BANDS_GetScanlistIndex();
-  }
-  if (gScanlistSize == 0) {
-    channelIndex = 0;
-  } else if (channelIndex > gScanlistSize) {
-    channelIndex = gScanlistSize - 1;
-  } */
+  
+  // Set title from filename
+  const char *title = strrchr(currentFile, '/');
+  chListMenu.title = title ? title + 1 : currentFile;
 }
 
 void CHLIST_deinit() { gChSaveMode = false; }

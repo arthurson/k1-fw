@@ -16,7 +16,8 @@ const Band DEFAULT_BAND = {
     .squelch.value = 4,
 };
 
-Band defaultBands[] = {
+// Default band definitions — stored in FLASH (const) to save RAM
+const Band defaultBands[] = {
     (Band){
         .start = 13570,
         .end = 13779,
@@ -616,8 +617,9 @@ Band BANDS_ByFrequency(uint32_t f) {
   // Storage_LoadMultiple("Bands.bnd", 0, b, sizeof(Band), MAX_BANDS);
   for (uint8_t i = 0; i < MAX_BANDS; ++i) {
     if (IsReadable(defaultBands[i].name)) {
-      if (BANDS_InRange(f, &defaultBands[i])) {
-        return defaultBands[i];
+      Band b = defaultBands[i]; /* copy from const FLASH to RAM */
+      if (BANDS_InRange(f, &b)) {
+        return b;
       }
     }
   }

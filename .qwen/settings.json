@@ -4,7 +4,10 @@
       "Read(//home/fagci/Downloads/**)",
       "Bash(make)",
       "Bash(sed *)",
-      "Bash(arm-none-eabi-gcc *)"
+      "Bash(arm-none-eabi-gcc *)",
+      "Bash(git push)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   },
   "$version": 3

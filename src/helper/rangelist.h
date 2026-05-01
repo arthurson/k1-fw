@@ -8,6 +8,7 @@
 #define RANGE_SIZE_MAX 50
 
 // Range entry for storage (simplified Band)
+// Fields ordered to avoid GCC packed bit-field alignment warnings
 typedef struct {
   uint32_t start : 27;
   uint32_t end : 27;
@@ -15,9 +16,9 @@ typedef struct {
   uint8_t modulation : 4;
   uint8_t bw : 4;
   Radio radio : 2;
-  Squelch squelch;
   uint8_t gainIndex : 5;
   bool allowTx : 1;
+  Squelch squelch;
   char name[10];
 } __attribute__((packed)) RangeEntry;
 

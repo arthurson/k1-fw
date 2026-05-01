@@ -14,7 +14,7 @@
 #include "misc.h"
 #endif
 
-#define PWM_FREQ 25000
+#define PWM_FREQ 20000
 #define DUTY_CYCLE_LEVELS 64
 
 #define DUTY_CYCLE_ON_VALUE GPIO_PIN_MASK(GPIO_PIN_BACKLIGHT)
@@ -23,6 +23,7 @@
 #define TIMx TIM7
 #define DMA_CHANNEL LL_DMA_CHANNEL_7
 
+// Timer CCR register is 32-bit, so DMA buffer must be uint32_t
 static uint32_t dutyCycle[DUTY_CYCLE_LEVELS];
 
 // this is decremented once every 500ms

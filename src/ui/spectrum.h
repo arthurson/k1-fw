@@ -16,7 +16,6 @@ typedef enum {
   GRAPH_NOISE,
   GRAPH_GLITCH,
   GRAPH_SNR,
-  GRAPH_APRS,
   GRAPH_TX,
   GRAPH_COUNT,
 } GraphMeasurement;
@@ -33,6 +32,7 @@ uint16_t SP_GetNoiseFloor();
 uint16_t SP_GetRssiMax();
 VMinMax SP_GetMinMax(void);
 VMinMax SP_GetGraphMinMax(void);
+VMinMax SP_GetAutoLevel(void);
 
 void SP_NextGraphUnit(bool next);
 void SP_RenderGraph(uint16_t min, uint16_t max);
@@ -46,7 +46,7 @@ uint16_t SP_GetPointNoise(uint8_t i);
 uint16_t SP_GetPointGlitch(uint8_t i);
 void SP_RenderPoint(Measurement *m, uint8_t i, uint8_t n, Band *b, VMinMax r,
                     Color c);
-void SP_RenderDbmGrid(VMinMax v, int8_t stepDbm);
+void SP_RenderDbmGrid(VMinMax v, uint16_t stepDbm);
 uint8_t SP_FindPeakX(void);
 uint32_t SP_GetPeakF(void);
 uint16_t SP_GetPeakRssi(void);
@@ -61,6 +61,7 @@ Band CUR_GetRange(Band *p, uint32_t step);
 uint32_t CUR_GetCenterF(uint32_t step);
 void CUR_Reset();
 bool CUR_Size(bool up);
+void CUR_SetPosByFreq(uint32_t f);
 
 extern uint8_t SPECTRUM_Y;
 extern uint8_t SPECTRUM_H;

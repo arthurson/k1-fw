@@ -1,6 +1,7 @@
 #include "settings.h"
 #include "../driver/backlight.h"
 #include "../driver/battery.h"
+#include "../driver/bk4829.h"
 #include "../driver/uart.h"
 #include "../external/printf/printf.h"
 #include "../helper/menu.h"
@@ -18,6 +19,24 @@ static void getValS(const MenuItem *item, char *buf, uint8_t buf_size) {
 
 static void updateValS(const MenuItem *item, bool up) {
   SETTINGS_IncDecValue(item->setting, up);
+
+  // Apply EQ settings immediately
+  switch (item->setting) {
+  case SETTING_AF_RX_300:
+    BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
+    break;
+  case SETTING_AF_RX_3K:
+    BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
+    break;
+  case SETTING_AF_TX_300:
+    BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
+    break;
+  case SETTING_AF_TX_3K:
+    BK4819_SetAFResponse(true, true, gSettings.af_tx_3k - 4);
+    break;
+  default:
+    break;
+  }
 }
 
 static void doCalibrate(uint32_t v, uint32_t _) {
@@ -133,6 +152,18 @@ static Menu radioMenu = {.title = "Radio",
                          .items = radioMenuItems,
                          .num_items = ARRAY_SIZE(radioMenuItems)};
 
+// Equalizer submenu
+static const MenuItem eqMenuItems[] = {
+    {"RX 300Hz", SETTING_AF_RX_300, getValS, updateValS},
+    {"RX 3kHz", SETTING_AF_RX_3K, getValS, updateValS},
+    {"TX 300Hz", SETTING_AF_TX_300, getValS, updateValS},
+    {"TX 3kHz", SETTING_AF_TX_3K, getValS, updateValS},
+};
+
+static Menu eqMenu = {.title = "Equalizer",
+                      .items = eqMenuItems,
+                      .num_items = ARRAY_SIZE(eqMenuItems)};
+
 // Battery submenu
 static const MenuItem batMenuItems[] = {
     {"Bat type", SETTING_BATTERYTYPE, getValS, updateValS},
@@ -148,6 +179,7 @@ static Menu batteryMenu = {.title = "Battery",
 static const MenuItem menuItems[] = {
     {"Scan", .submenu = &scanMenu},
     {"Radio", .submenu = &radioMenu},
+    {"Equalizer", .submenu = &eqMenu},
     {"Display", .submenu = &displayMenu},
     {"Battery", .submenu = &batteryMenu},
     {"Beep", SETTING_BEEP, getValS, updateValS},

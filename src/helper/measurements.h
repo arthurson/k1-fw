@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #define SQ_PRESETS_COUNT 11  // 0..10 levels
+#define SQ_HYSTERESIS 4      // Отклонение close от open thresholds
 
 typedef struct {
   uint16_t ro;  // RSSI open threshold
@@ -42,7 +43,6 @@ uint8_t Rssi2PX(uint16_t rssi, uint8_t pxMin, uint8_t pxMax);
 uint8_t DBm2S(int dbm, bool isUHF);
 int16_t Rssi2DBm(uint16_t rssi);
 uint16_t DBm2Rssi(int16_t dbm);
-uint16_t Mid(const uint16_t *array, size_t n);
 uint16_t Min(const uint16_t *array, size_t n);
 uint16_t Max(const uint16_t *array, size_t n);
 uint16_t Mean(const uint16_t *array, size_t n);
@@ -51,7 +51,7 @@ uint16_t Std(const uint16_t *data, size_t n);
 uint32_t AdjustU(uint32_t val, uint32_t min, uint32_t max, int32_t inc);
 uint32_t IncDecU(uint32_t val, uint32_t min, uint32_t max, bool inc);
 
-bool IsReadable(char *name);
+bool IsReadable(const char *name);
 SQL GetSql(uint8_t level);
 
 // Squelch preset management (file-based, VHF/UHF separate)

@@ -16,7 +16,6 @@
 #include "external/CMSIS/Device/PY32F071/Include/py32f071xB.h"
 #include "external/littlefs/lfs.h"
 #include "external/printf/printf.h"
-#include "helper/audio_io.h"
 #include "helper/audio_rec.h"
 #include "helper/bands.h"
 #include "helper/fsk2.h"
@@ -47,8 +46,15 @@ static uint32_t secondTimer;
 static uint32_t toastTimer;
 static uint32_t backlightTimer;
 static uint32_t appsKeyboardTimer;
+static uint32_t intPollTimer;
+static uint32_t statusLineTimer;
 
 static void appRender(void) {
+  // Подавляем все обновления дисплея (FC режим при открытом шумодаве)
+  if (gSuppressDisplayUpdates) {
+    return;
+  }
+
   if (!gRedrawScreen || Now() - gLastRender < 32) {
     return;
   }
@@ -109,11 +115,29 @@ static void reset(void) {
 }
 
 static void loadSettingsOrReset(void) {
+  bool recreate = false;
   if (!lfs_file_exists("Settings.set")) {
+    recreate = true;
+  } else {
+    // Проверка размера файла — если структура расширилась, пересоздаём
+    struct lfs_info info;
+    if (lfs_stat(&gLfs, "Settings.set", &info) == 0 &&
+        info.size != sizeof(Settings)) {
+      recreate = true;
+    }
+  }
+
+  if (recreate) {
     STORAGE_INIT("Settings.set", Settings, 1);
     STORAGE_SAVE("Settings.set", 0, &gSettings);
   }
   STORAGE_LOAD("Settings.set", 0, &gSettings);
+
+  // Apply global EQ settings to BK4819
+  BK4819_SetAFResponse(false, false, gSettings.af_rx_300 - 4);
+  BK4819_SetAFResponse(false, true, gSettings.af_rx_3k - 4);
+  BK4819_SetAFResponse(true, false, gSettings.af_tx_300 - 4);
+  BK4819_SetAFResponse(true, true, gSettings.af_tx_3k - 4);
 
   if (!lfs_file_exists("Bands.bnd")) {
     STORAGE_INIT("Bands.bnd", Band, MAX_BANDS);
@@ -512,11 +536,18 @@ void SYS_Main(void) {
   LogC(LOG_C_BRIGHT_WHITE, "System initialized");
 
   for (;;) {
+    uint32_t now = Now(); // Read once per loop — fewer TIM2 accesses
+
     SETTINGS_UpdateSave();
-    checkInt();
+    // BK4819 IRQ polling: чтение REG_0C — SPI-транзакция, раньше шла каждую мс
+    // впустую. 3 мс не влияют на DTMF/FSK/STE-tail (события идут медленнее).
+    if ((gCurrentApp != APP_ANALYSER) && now - intPollTimer >= 3) {
+      checkInt();
+      intPollTimer = now;
+    }
     SCAN_Check();
 
-    if (dtmfIdx > 0 && Now() - lastDtmf > 400) {
+    if (dtmfIdx > 0 && now - lastDtmf > 400) {
       TOAST_Push("DTMF: %s", dtmfBuf);
       dtmfIdx = 0;
     }
@@ -527,32 +558,38 @@ void SYS_Main(void) {
     if (gTextInputActive) {
       TEXTINPUT_update();
     }
-    if (gLootlistActive) {
+    /* if (gLootlistActive) {
       LOOTLIST_update();
-    }
+    } */
 
-    AUDIO_IO_Update();
     APPS_update();
 
-    if (Now() - toastTimer >= 40) {
+    if (now - toastTimer >= 40) {
       TOAST_Update();
-      toastTimer = Now();
+      toastTimer = now;
     }
-    if (Now() - appsKeyboardTimer >= 1) {
+    if (now - appsKeyboardTimer >= 5) {
       keyboard_tick_1ms();
-      appsKeyboardTimer = Now();
+      appsKeyboardTimer = now;
     }
-    if (Now() - backlightTimer >= 500) {
+    if (now - backlightTimer >= 500) {
       BACKLIGHT_UpdateTimer();
-      backlightTimer = Now();
+      backlightTimer = now;
     }
-    if (Now() - secondTimer >= 1000) {
+    if (now - secondTimer >= 1000) {
       BATTERY_UpdateBatteryInfo();
-      STATUSLINE_update();
-      secondTimer = Now();
+      secondTimer = now;
     }
 
-    if (Now() - gLastRender >= 500) {
+    if (now - statusLineTimer >= 50) {
+      STATUSLINE_update();
+      statusLineTimer = now;
+    }
+
+    // Watchdog-redraw: страхует случай, когда dirty-флаг не был поднят.
+    // STATUSLINE_update (раз в сек) сам ставит gRedrawScreen при изменениях,
+    // поэтому здесь достаточно редкого тика.
+    if (now - gLastRender >= 1000) {
       gRedrawScreen = true;
     }
 

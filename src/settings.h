@@ -53,6 +53,11 @@ typedef enum {
   SETTING_FREQ_CORRECTION,
   SETTING_INVERT_BUTTONS,
 
+  SETTING_AF_RX_300,
+  SETTING_AF_RX_3K,
+  SETTING_AF_TX_300,
+  SETTING_AF_TX_3K,
+
   SETTING_COUNT,
 } Setting;
 
@@ -181,6 +186,11 @@ typedef struct {
 
   uint8_t deviation;
 
+  int8_t af_rx_300;  // RX 300Hz AF response gain (0-8, 4=0dB)
+  int8_t af_rx_3k;   // RX 3kHz AF response gain (0-8, 4=0dB)
+  int8_t af_tx_300;  // TX 300Hz AF response gain (0-8, 4=0dB)
+  int8_t af_tx_3k;   // TX 3kHz AF response gain (0-8, 4=0dB)
+
   uint8_t activeVFO : 2;
   bool skipGarbageFrequencies : 1;
 
@@ -207,5 +217,8 @@ const char *SETTINGS_GetValueString(Setting s);
 void SETTINGS_IncDecValue(Setting s, bool inc);
 
 void SETTINGS_UpdateSave();
+void SETTINGS_MarkDirty(Setting s);
+
+extern bool dirty[SETTING_COUNT];
 
 #endif /* end of include guard: SETTINGS_H */

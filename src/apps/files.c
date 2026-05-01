@@ -11,8 +11,8 @@
 #include <string.h>
 
 // Increased MAX_NAME_LEN from 12 to 16 to fit filenames like "Settings.set" (12 chars + null)
-// Memory: 20 × 20 = 400 bytes → 20 × 24 = 480 bytes (80 bytes more, still acceptable)
-#define MAX_FILES     20
+// Memory: 12 × 24 = 288 bytes (reduced from 480)
+#define MAX_FILES     12
 #define MAX_PATH_LEN  64
 #define MAX_NAME_LEN  16   // 15 символов + '\0'; достаточно для имён типа "Settings.set"
 
@@ -217,6 +217,39 @@ static void navigateTo(const char *name) {
     formatSize(info.size, sizeStr, sizeof(sizeStr));
     STATUSLINE_SetText("%s - %s", name, sizeStr);
     const char *ext = getFileExtension(name);
+    if (strcmp(ext, "sq") == 0) {
+      // Open squelch editor with this file
+      char fullPath[MAX_PATH_LEN];
+      if (strcmp(gCurrentPath, "/") == 0) {
+        snprintf(fullPath, sizeof(fullPath), "/%s", name);
+      } else {
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", gCurrentPath, name);
+      }
+      APPS_runWithFile(APP_SQVIEWER, fullPath);
+      return;
+    }
+    if (strcmp(ext, "ch") == 0) {
+      // Open channel list editor with this file
+      char fullPath[MAX_PATH_LEN];
+      if (strcmp(gCurrentPath, "/") == 0) {
+        snprintf(fullPath, sizeof(fullPath), "/%s", name);
+      } else {
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", gCurrentPath, name);
+      }
+      APPS_runWithFile(APP_CHLIST, fullPath);
+      return;
+    }
+    if (strcmp(ext, "cmd") == 0) {
+      // Open command editor with this file
+      char fullPath[MAX_PATH_LEN];
+      if (strcmp(gCurrentPath, "/") == 0) {
+        snprintf(fullPath, sizeof(fullPath), "/%s", name);
+      } else {
+        snprintf(fullPath, sizeof(fullPath), "%s/%s", gCurrentPath, name);
+      }
+      APPS_runWithFile(APP_CMDEDIT, fullPath);
+      return;
+    }
     if (strcmp(ext, "bmp") == 0) {
       showingScreenshot = true;
       snprintf(screenshotPath, sizeof(screenshotPath), "%s/%s",

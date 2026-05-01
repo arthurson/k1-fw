@@ -16,6 +16,8 @@
 
 static uint32_t saveTime;
 
+bool dirty[SETTING_COUNT];
+
 static const uint16_t BAT_CAL_MIN = 1900;
 
 static const char *YES_NO[] = {"No", "Yes"};
@@ -88,6 +90,10 @@ Settings gSettings = {
     .deviation = 130, // 1300
     .freqCorrection = 0,
     .invertButtons = true,
+    .af_rx_300 = 4,
+    .af_rx_3k = 4,
+    .af_tx_300 = 4,
+    .af_tx_3k = 4,
 };
 
 const uint32_t EEPROM_SIZES[6] = {
@@ -109,12 +115,10 @@ const uint16_t PAGE_SIZES[6] = {
 };
 
 void SETTINGS_Save(void) {
-  // EEPROM_WriteBuffer(SETTINGS_OFFSET, &gSettings, SETTINGS_SIZE);
   STORAGE_SAVE("Settings.set", 0, &gSettings);
 }
 
 void SETTINGS_Load(void) {
-  // EEPROM_ReadBuffer(SETTINGS_OFFSET, &gSettings, SETTINGS_SIZE);
   STORAGE_LOAD("Settings.set", 0, &gSettings);
 }
 
@@ -224,6 +228,14 @@ uint32_t SETTINGS_GetValue(Setting s) {
     return gSettings.toneLocal;
   case SETTING_INVERT_BUTTONS:
     return gSettings.invertButtons;
+  case SETTING_AF_RX_300:
+    return gSettings.af_rx_300;
+  case SETTING_AF_RX_3K:
+    return gSettings.af_rx_3k;
+  case SETTING_AF_TX_300:
+    return gSettings.af_tx_300;
+  case SETTING_AF_TX_3K:
+    return gSettings.af_tx_3k;
   }
   return 0;
 }
@@ -367,6 +379,18 @@ void SETTINGS_SetValue(Setting s, uint32_t v) {
   case SETTING_INVERT_BUTTONS:
     gSettings.invertButtons = v;
     break;
+  case SETTING_AF_RX_300:
+    gSettings.af_rx_300 = v;
+    break;
+  case SETTING_AF_RX_3K:
+    gSettings.af_rx_3k = v;
+    break;
+  case SETTING_AF_TX_300:
+    gSettings.af_tx_300 = v;
+    break;
+  case SETTING_AF_TX_3K:
+    gSettings.af_tx_3k = v;
+    break;
   case SETTING_COUNT:
     return;
   }
@@ -463,6 +487,13 @@ const char *SETTINGS_GetValueString(Setting s) {
 
   case SETTING_CURRENTSCANLIST:
     ScanlistStr(v, buf);
+    break;
+
+  case SETTING_AF_RX_300:
+  case SETTING_AF_RX_3K:
+  case SETTING_AF_TX_300:
+  case SETTING_AF_TX_3K:
+    sprintf(buf, "%+ddB", (int)v - 4);
     break;
 
   case SETTING_BATSAVE:
@@ -588,6 +619,12 @@ void SETTINGS_IncDecValue(Setting s, bool inc) {
   case SETTING_SCANMODE:
   case SETTING_BUSYCHANNELTXLOCK:
     break;
+  case SETTING_AF_RX_300:
+  case SETTING_AF_RX_3K:
+  case SETTING_AF_TX_300:
+  case SETTING_AF_TX_3K:
+    ma = 9; // 0..8 -> -4..+4 dB
+    break;
   }
 
   SETTINGS_SetValue(s, IncDecU(v, mi, ma, inc));
@@ -601,4 +638,9 @@ void SETTINGS_UpdateSave() {
       dirty[i] = false;
     }
   }
+}
+
+void SETTINGS_MarkDirty(Setting s) {
+  dirty[s] = true;
+  saveTime = Now() + 1000;
 }

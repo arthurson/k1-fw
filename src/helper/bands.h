@@ -24,5 +24,6 @@ uint32_t BANDS_GetF(Band *p, uint32_t channel);
 uint32_t BANDS_GetChannel(Band *p, uint32_t f);
 
 extern const Band DEFAULT_BAND;
+extern const Band defaultBands[];
 
 #endif // !BANDS_H

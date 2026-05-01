@@ -16,9 +16,10 @@ typedef enum {
   APP_CMDSCAN,
   APP_CMDEDIT,
   APP_ANALYSER,
+  APP_SQVIEWER,
+  APP_CHLIST,
   APP_MESSENGER,
   // APP_OSC,
-  APP_LOOTLIST,
   APP_FILES,
   APP_ABOUT,
 
@@ -40,6 +41,7 @@ extern const App apps[APPS_COUNT];
 extern const AppType_t appsAvailableToRun[RUN_APPS_COUNT];
 
 extern AppType_t gCurrentApp;
+extern char gOpenedFile[64]; // Filename opened from filemanager
 
 AppType_t APPS_Peek();
 bool APPS_key(KEY_Code_t Key, KEY_State_t state);
@@ -47,6 +49,7 @@ void APPS_init(AppType_t app);
 void APPS_update(void);
 void APPS_render(void);
 void APPS_run(AppType_t app);
+void APPS_runWithFile(AppType_t app, const char *filename);
 void APPS_runManual(AppType_t app);
 bool APPS_exit(void);
 

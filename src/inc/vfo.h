@@ -21,15 +21,15 @@ typedef struct {
   uint8_t bw : 4;
   Radio radio : 2;
   TXOutputPower power : 2;
-  uint8_t mic : 4;           // Mic gain (0-15)
+  uint8_t mic : 4; // Mic gain (0-15)
   uint8_t scrambler : 4;
   Squelch squelch;
   CodeRXTX code;
   bool fixedBoundsMode : 1;
   bool isChMode : 1;
   uint8_t gainIndex : 5;
-  uint8_t deviation;         // Deviation setting (0-255, stored as value*10 when used)
-  uint32_t upconverter;      // Upconverter frequency shift (full 32-bit)
+  uint8_t deviation; // Deviation setting (0-255, stored as value*10 when used)
+  uint32_t upconverter; // Upconverter frequency shift (full 32-bit)
 } __attribute__((packed)) VFO;
 
 // Параметры
@@ -38,7 +38,6 @@ typedef enum {
   PARAM_PRECISE_F_CHANGE,
   PARAM_STEP,
   PARAM_POWER,
-  PARAM_MODULATION,
   PARAM_SQUELCH_TYPE,
   PARAM_SQUELCH_VALUE,
   PARAM_GAIN,
@@ -64,6 +63,7 @@ typedef enum {
   PARAM_AF_TX_3K,
   PARAM_DEV,
   PARAM_MIC,
+  PARAM_AGC,
   PARAM_XTAL,
   PARAM_SCRAMBLER,
   PARAM_FILTER,
@@ -74,9 +74,11 @@ typedef enum {
   PARAM_GLITCH,
   PARAM_SNR,
 
+  PARAM_MODULATION,
+
   // IMPORTANT FOR SI47xx (know modulation before f set)
-  PARAM_FREQUENCY,
   PARAM_FREQUENCY_FACT,
+  PARAM_FREQUENCY,
 
   PARAM_COUNT,
 } ParamType;
@@ -165,7 +167,7 @@ typedef struct {
 
   const FreqBand *current_band; // Активный диапазон
   uint32_t last_save_time; // Время последнего сохранения
-  uint32_t frequency : 27; // Текущая частота
+  uint32_t frequency : 27;   // Текущая частота
   uint32_t upconverter : 27; // Upconverter frequency shift
   uint16_t dev;
   uint8_t volume; // Громкость
@@ -183,6 +185,7 @@ typedef struct {
   uint8_t bandwidth : 4;         // Полоса пропускания
   uint8_t bandwidth_index : 4;
   uint8_t mic : 4;
+  uint8_t agc;
   Radio radio_type : 4;
   uint8_t gain : 5;
   uint8_t modulation_index : 3;

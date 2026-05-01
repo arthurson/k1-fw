@@ -1,12 +1,12 @@
 #include "board.h"
 #include "driver/audio.h"
+#include "driver/backlight.h"
 #include "driver/bk4819-regs.h"
 #include "driver/bk4829.h"
 #include "driver/gpio.h"
+#include "driver/hrtime.h"
 #include "driver/st7565.h"
 #include "driver/systick.h"
-#include "helper/audio_io.h"
-#include "helper/pocsag.h"
 #include "system.h"
 #include "ui/graphics.h"
 #include <assert.h>
@@ -79,11 +79,13 @@ void testScan() {
 
 int main(void) {
   SYSTICK_Init();
+  HRTIME_Init();
 
   BOARD_Init();
   GPIO_TurnOnBacklight();
+  BACKLIGHT_SetBrightness(2);
 
-  AUDIO_IO_Init();
+  // AUDIO_IO_Init(); // Отключено — ADC/DAC DMA создают RF помехи
 
   SYS_Main();
 }

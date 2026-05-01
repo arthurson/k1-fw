@@ -22,6 +22,8 @@ static bool pttWasLongPressed = false;
 
 static char String[16];
 
+static bool showSpectrum;
+
 // Для определения состояния CHK: отслеживаем изменение частоты
 static uint32_t lastTrackedF = 0;
 static uint32_t lastFChangeMs = 0;
@@ -57,6 +59,9 @@ static void initBand(void) {
 }
 
 void SCANER_init(void) {
+  SPECTRUM_Y = 16;
+  SPECTRUM_H = LCD_HEIGHT - SPECTRUM_Y - 16 - 7;
+
   gMonitorMode = false;
   lastTrackedF = 0;
   lastFChangeMs = 0;
@@ -135,19 +140,6 @@ static bool handleRepeatableKeys(KEY_Code_t key) {
     SCAN_SetDelay(
         AdjustU(SCAN_GetDelay(), 0, 10000, key == KEY_1 ? 100 : -100));
     return true;
-  case KEY_2:
-  case KEY_8:
-    if (key == KEY_2) {
-      gCurrentBand.end =
-          gCurrentBand.start + (gCurrentBand.end - gCurrentBand.start) * 2;
-    } else {
-      gCurrentBand.end =
-          gCurrentBand.start + (gCurrentBand.end - gCurrentBand.start) / 2;
-    }
-    gCurrentBand.end =
-        RoundToStep(gCurrentBand.end, StepFrequencyTable[gCurrentBand.step]);
-    SCAN_SetBand(gCurrentBand);
-    return true;
 
   case KEY_3:
   case KEY_9:
@@ -159,6 +151,10 @@ static bool handleRepeatableKeys(KEY_Code_t key) {
   case KEY_UP:
   case KEY_DOWN:
     shiftBand((key == KEY_UP) ^ gSettings.invertButtons);
+    return true;
+
+  case KEY_6:
+    showSpectrum = !showSpectrum;
     return true;
 
   default:
@@ -322,28 +318,31 @@ void SCANER_render(void) {
 
   ScanState state = SCAN_GetState();
 
-  LOOT_Sort(LOOT_SortByLastOpenTime, true);
-  uint8_t y = 15 + 7;
-  uint8_t cnt = 0;
+  if (showSpectrum) {
+    SP_Render(&gCurrentBand, SP_GetMinMax());
+  } else {
+    uint8_t y = 15 + 7;
+    uint8_t cnt = 0;
 
-  for (int16_t i = LOOT_Size() - 1; i >= 0 && cnt < 4; --i) {
-    Loot *v = LOOT_Item(i);
-    const uint32_t ago = (Now() - v->lastTimeOpen) / 1000;
-    mhzToS(String, v->f);
+    for (int16_t i = LOOT_Size() - 1; i >= 0 && cnt < 4; --i) {
+      Loot *v = LOOT_Item(i);
+      const uint32_t ago = (Now() - v->lastTimeOpen) / 1000;
+      mhzToS(String, v->f);
 
-    PrintMediumEx(0, y, POS_L, C_FILL, "%s %02u:%02u", String, ago / 60,
-                  ago % 60);
+      PrintMediumEx(0, y, POS_L, C_FILL, "%s %02u:%02u", String, ago / 60,
+                    ago % 60);
 
-    if (v->code != 255) {
-      if (v->isCd) {
-        PrintRTXCode(String, CODE_TYPE_DIGITAL, v->code);
-      } else {
-        PrintRTXCode(String, CODE_TYPE_CONTINUOUS_TONE, v->code);
+      if (v->code != 255) {
+        if (v->isCd) {
+          PrintRTXCode(String, CODE_TYPE_DIGITAL, v->code);
+        } else {
+          PrintRTXCode(String, CODE_TYPE_CONTINUOUS_TONE, v->code);
+        }
+        PrintMediumEx(LCD_WIDTH - 1, y, POS_R, C_FILL, "%s", String);
       }
-      PrintMediumEx(LCD_WIDTH - 1, y, POS_R, C_FILL, "%s", String);
+      cnt++;
+      y += 8;
     }
-    cnt++;
-    y += 8;
   }
 
   if (state == SCAN_STATE_LISTENING) {

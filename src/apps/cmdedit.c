@@ -41,7 +41,7 @@ static Menu cmdMenu;
 static uint8_t selected_index;
 
 // Устанавливается из cmdscan.c перед APPS_run(APP_CMDEDIT)
-char gCmdEditFilename[32] = "/scans/cmd1.bin";
+char gCmdEditFilename[32] = "/scans/cmd1.cmd";
 
 // ============================================================================
 // Поля редактирования
@@ -198,6 +198,13 @@ static void AddCommand(void) {
   gEditCtx.commands[gEditCtx.totalCommands++] = newCmd;
   gEditCtx.modified = true;
   cmdMenu.num_items = gEditCtx.totalCommands;
+}
+static void CommentCommand(uint16_t index) {
+  if (index >= gEditCtx.totalCommands)
+    return;
+
+  gEditCtx.commands[index].skip = !gEditCtx.commands[index].skip;
+  gEditCtx.modified = true;
 }
 
 static void DeleteCommand(uint16_t index) {
@@ -360,6 +367,10 @@ static void renderCommandItem(uint16_t index, uint8_t i) {
   PrintMediumEx(2, ty, POS_L, C_FILL, "%u:%s", index + 1,
                 SCMD_NAMES_SHORT[cmd->type]);
 
+  if (cmd->skip) {
+    DrawHLine(0, ty - 3, LCD_WIDTH - 4, C_FILL);
+  }
+
   switch (cmd->type) {
   case SCMD_RANGE:
     PrintSmallEx(40, ty, POS_L, C_INVERT, "%lu-%lu", cmd->start / KHZ,
@@ -513,6 +524,9 @@ static bool listModeAction(const uint16_t index, KEY_Code_t key,
       return true;
     case KEY_2:
       DuplicateCommand(index);
+      return true;
+    case KEY_3:
+      CommentCommand(index);
       return true;
     case KEY_0:
       DeleteCommand(index);

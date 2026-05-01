@@ -11,6 +11,7 @@
 #include "measurements.h"
 
 #define GARBAGE_FREQ_STEP 650000U
+#define SOFT_SQ_HEADROOM 25 // % смягчения аппаратных порогов
 #define STE_DEBOUNCE_MS 250 // окно подавления STE-хвоста
 
 // --- Адаптивный детектор (EMA) ---
@@ -48,6 +49,18 @@ static ScanContext scan = {
 static SCMD_Context cmdctx;
 static uint32_t sqReopenAt = 0;
 
+// Хелпер для PLL_VCO бита REG_30. Чтение REG_30 в драйвере bk4829.c кэшируется
+// глобально (см. reg30state), поэтому повторные reads бесплатны. Писать —
+// дорого, драйвер write не фильтрует. Поэтому пропускаем write, если бит уже в
+// нужном состоянии.
+static void Reg30_SetPllVco(bool on) {
+  uint16_t cur = BK4819_ReadRegister(BK4819_REG_30);
+  uint16_t nv = on ? (cur | BK4819_REG_30_ENABLE_PLL_VCO)
+                   : (cur & ~BK4819_REG_30_ENABLE_PLL_VCO);
+  if (nv != cur)
+    BK4819_WriteRegister(BK4819_REG_30, nv);
+}
+
 const char *SCAN_MODE_NAMES[] = {
     [SCAN_MODE_NONE] = "None",         [SCAN_MODE_SINGLE] = "VFO",
     [SCAN_MODE_FREQUENCY] = "Scan",    [SCAN_MODE_CHANNEL] = "CH Scan",
@@ -70,6 +83,30 @@ static void STE_StartGate(void) {
 
 static bool IsSqOpenGated(void) {
   return BK4819_IsSquelchOpen() && (Now() >= sqReopenAt);
+}
+
+// Пороги из GetSql(), смягчённые на SOFT_SQ_HEADROOM%:
+//   rssi: на 15% ниже порога открытия (ловим раньше)
+//   noise/glitch: на 15% выше (терпим больше)
+static bool SoftSq_Check(uint8_t rssi, uint8_t noise, uint8_t glitch) {
+  SQL sq = GetSql((uint8_t)RADIO_GetParam(ctx, PARAM_SQUELCH_VALUE));
+
+  if (rssi < (uint16_t)sq.ro * (100 - SOFT_SQ_HEADROOM) / 100)
+    return false;
+
+  uint8_t softNo = (uint8_t)((uint16_t)sq.no * (100 + SOFT_SQ_HEADROOM) / 100);
+  uint8_t softGo = (uint8_t)((uint16_t)sq.go * (100 + SOFT_SQ_HEADROOM) / 100);
+
+  switch (ctx->squelch.type) {
+  case 0:
+    return (noise <= softNo) && (glitch <= softGo); // RNG
+  case 1:
+    return (glitch <= softGo); // RG
+  case 2:
+    return (noise <= softNo); // RN
+  default:
+    return true; // R
+  }
 }
 
 // --- Адаптивный пол шума (EMA) ---
@@ -278,6 +315,9 @@ static void HandleStateTuning(void) {
 
   RADIO_MuteAudioNow(gRadioState);
 
+  // Включаем VCO перед перестройкой (мог быть выключен после прошлого замера)
+  Reg30_SetPllVco(true);
+
   RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, false, false);
   RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
   RADIO_ApplySettings(ctx);
@@ -292,47 +332,33 @@ static void HandleStateTuning(void) {
   scan.scanCycles++;
   UpdateCPS();
 
+  SP_AddPoint(&scan.measurement);
   if (scan.mode == SCAN_MODE_ANALYSER) {
-    SP_AddPoint(&scan.measurement);
+    // Analyser всегда идёт дальше — глушим VCO, чтобы не размазывало следующий
+    // замер
+    Reg30_SetPllVco(false);
     scan.currentF += scan.stepF;
     return;
   }
 
   if (AdaptiveSq_Check(scan.measurement.rssi, scan.measurement.noise,
                        scan.measurement.glitch)) {
+    // Кандидат — VCO остаётся ON для CHECKING. Экономим write OFF + write ON,
+    // которые раньше делались подряд.
     ChangeState(SCAN_STATE_CHECKING);
   } else {
+    // Не кандидат — глушим VCO, чтобы не размазывало на следующий шаг
+    Reg30_SetPllVco(false);
     scan.measurement.open = false;
     scan.currentF += scan.stepF;
   }
 }
 
 static void HandleStateChecking(void) {
-  static uint32_t lastEnteredAt = 0;
-  static bool vcoResetDone = false;
-  static uint32_t vcoResetAt = 0;
-
-  if (scan.stateEnteredAt != lastEnteredAt) {
-    lastEnteredAt = scan.stateEnteredAt;
-    vcoResetDone = false;
-    vcoResetAt = 0;
-  }
-
-  if (!vcoResetDone) {
-    uint16_t reg = BK4819_ReadRegister(BK4819_REG_30);
-    BK4819_WriteRegister(BK4819_REG_30, 0x200);
-    BK4819_WriteRegister(BK4819_REG_30, reg);
-
-    vcoResetAt = Now(); // отсчёт SQL_DELAY с этого момента
-    vcoResetDone = true;
-    return;
-  }
-
-  if (Now() - vcoResetAt < scan.checkDelayMs)
+  if (ElapsedMs() < scan.checkDelayMs)
     return;
 
   bool isOpen = BK4819_IsSquelchOpen();
-
   scan.isOpen = isOpen;
   scan.measurement.open = isOpen;
   scan.measurement.f = scan.currentF;
@@ -351,25 +377,9 @@ static void HandleStateChecking(void) {
 
     ChangeState(SCAN_STATE_LISTENING);
   } else {
-    // выравнивание PLL: прогрев через предыдущую частоту и обратно
-    if (scan.stepF > 0) {
-      RADIO_SetParam(ctx, PARAM_PRECISE_F_CHANGE, true, false);
-      RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF - scan.stepF, false);
-      RADIO_ApplySettings(ctx);
-      SYSTICK_DelayUs(scan.warmupUs);
-
-      RADIO_SetParam(ctx, PARAM_FREQUENCY, scan.currentF, false);
-      RADIO_ApplySettings(ctx);
-      SYSTICK_DelayUs(scan.warmupUs);
-    }
-
-    // EMA обновляем только если RSSI у пола — иначе отравим порог реальным
-    // сигналом
-    uint8_t floorR = EmaGet(afloor.rssiEma);
-    if (scan.measurement.rssi <= floorR + FLOOR_MARGIN_RSSI + 2)
-      AdapFloor_UpdateEma(scan.measurement.rssi, scan.measurement.noise,
-                          scan.measurement.glitch);
-
+    // ложный кандидат — скормить в EMA, чтобы пол адаптировался к размазыванию
+    AdapFloor_UpdateEma(scan.measurement.rssi, scan.measurement.noise,
+                        scan.measurement.glitch);
     scan.currentF += scan.stepF;
     ChangeState(SCAN_STATE_TUNING);
   }
@@ -524,7 +534,6 @@ void SCAN_SetRange(uint32_t fs, uint32_t fe) {
 
 void SCAN_Next(void) {
   vfo->is_open = false;
-  RADIO_MuteAudioNow(gRadioState);
   scan.currentF += scan.stepF;
   RADIO_SwitchAudioToVFO(gRadioState, gRadioState->active_vfo_index);
   ChangeState(SCAN_STATE_TUNING);

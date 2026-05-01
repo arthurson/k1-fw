@@ -6,6 +6,7 @@
 #include "../inc/band.h"
 #include "../radio.h"
 #include "bands.h"
+#include "storage.h"
 #include <stdint.h>
 
 static Loot loot[LOOT_SIZE_MAX] = {0};
@@ -56,13 +57,26 @@ Loot *LOOT_AddEx(uint32_t f, bool reuse) {
       return p;
     }
   }
-  if (LOOT_Size() < LOOT_SIZE_MAX) {
-    lootIndex++;
+  if (LOOT_Size() >= LOOT_SIZE_MAX) {
+    // FIFO-вытеснение: убираем самый старый незащищённый слот.
+    // whitelist/blacklist помечены пользователем — не трогаем.
+    int16_t evict = -1;
+    for (uint16_t i = 0; i < LOOT_Size(); ++i) {
+      if (!loot[i].whitelist && !loot[i].blacklist) {
+        evict = (int16_t)i;
+        break;
+      }
+    }
+    if (evict < 0) {
+      return NULL; // все слоты защищены — отказ от добавления
+    }
+    LOOT_Remove((uint16_t)evict);
   }
+  lootIndex++;
   lastTimeCheck = Now();
   loot[lootIndex] = (Loot){
       .f = f,
-      .lastTimeOpen = Now(),
+      .lastTimeOpen = (uint16_t)(Now() / 1000),
       .duration = 0,
       .code = 0xFF,
       .open = true, // as we add it when open
@@ -83,6 +97,11 @@ void LOOT_Remove(uint16_t i) {
   for (; i < LOOT_Size() - 1; ++i)
     loot[i] = loot[i + 1];
   lootIndex--;
+  // Сдвиг массива инвалидировал указатель — перепривязываем по частоте
+  if (lastActiveLootF) {
+    gLastActiveLoot = LOOT_Get(lastActiveLootF);
+    gLastActiveLootIndex = gLastActiveLoot ? LOOT_IndexOf(gLastActiveLoot) : -1;
+  }
 }
 
 void LOOT_Clear(void) {
@@ -174,13 +193,29 @@ void LOOT_UpdateEx(Loot *item, Measurement *msm) {
   // item->snr = msm->snr;
 
   if (item->open) {
-    item->duration += Now() - lastTimeCheck;
+    // Аккумулируем мс пока активен один и тот же loot, переносим целые
+    // секунды в item->duration. Сброс при смене активного — теряем <1 сек.
+    static const Loot *durationOwner = NULL;
+    static uint16_t durationFracMs = 0;
+
+    if (durationOwner != item) {
+      durationOwner = item;
+      durationFracMs = 0;
+    }
+    uint32_t dms = Now() - lastTimeCheck;
+    durationFracMs += (uint16_t)(dms > 999 ? 999 : dms); // защита от заскока
+    while (durationFracMs >= 1000) {
+      durationFracMs -= 1000;
+      if (item->duration < 0xFFFF)
+        item->duration++;
+    }
+
     gLastActiveLoot = item;
     gLastActiveLootIndex = LOOT_IndexOf(item);
     lastActiveLootF = item->f;
   }
   if (msm->open) {
-    item->lastTimeOpen = Now();
+    item->lastTimeOpen = (uint16_t)(Now() / 1000);
     uint32_t cd = 0;
     uint16_t ct = 0;
     uint8_t Code = 0;
@@ -212,8 +247,8 @@ void LOOT_UpdateEx(Loot *item, Measurement *msm) {
   item->bw = RADIO_GetParam(ctx, PARAM_BANDWIDTH);
   item->gainIndex = RADIO_GetParam(ctx, PARAM_GAIN);
   item->radio = RADIO_GetParam(ctx, PARAM_RADIO);
-  item->squelch.type = RADIO_GetParam(ctx, PARAM_SQUELCH_TYPE);
-  item->squelch.value = RADIO_GetParam(ctx, PARAM_SQUELCH_VALUE);
+  item->squelch_type = RADIO_GetParam(ctx, PARAM_SQUELCH_TYPE);
+  item->squelch_value = RADIO_GetParam(ctx, PARAM_SQUELCH_VALUE);
 }
 
 void LOOT_Update(Measurement *msm) {
@@ -271,7 +306,8 @@ CH LOOT_ToCh(const Loot *loot) {
   ch.bw = loot->bw;
   ch.radio = loot->radio;
   ch.gainIndex = loot->gainIndex;
-  ch.squelch = loot->squelch;
+  ch.squelch.type = loot->squelch_type;
+  ch.squelch.value = loot->squelch_value;
   ch.modulation = loot->modulation;
 
   return ch;
@@ -281,52 +317,69 @@ CH LOOT_ToCh(const Loot *loot) {
 // Persistence: save/load loot list to/from file
 // ============================================================================
 
-bool LOOT_SaveToFile(const char *filename) {
-  uint16_t count = LOOT_Size();
-  if (count == 0) {
-    // Save empty list
-    return Storage_Save(filename, 0, &count, sizeof(count));
-  }
+// Magic привязан к sizeof(Loot). При смене раскладки структуры — bump.
+#define LOOT_FILE_MAGIC 0x4C54u // 'LT'
+#define LOOT_FILE_VERSION 3
 
-  // Save count + loot items
-  // First save the count at index 0
-  if (!Storage_Save(filename, 0, &count, sizeof(count))) {
+typedef struct {
+  uint16_t magic;
+  uint16_t version;
+  uint16_t count;
+  uint16_t loot_size; // sizeof(Loot) — доп. защита
+} LootFileHeader;
+
+bool LOOT_SaveToFile(const char *filename) {
+  LootFileHeader hdr = {
+      .magic = LOOT_FILE_MAGIC,
+      .version = LOOT_FILE_VERSION,
+      .count = LOOT_Size(),
+      .loot_size = sizeof(Loot),
+  };
+  if (!Storage_Save(filename, 0, &hdr, sizeof(hdr))) {
     return false;
   }
-
-  // Save all loot items starting from index 1
-  return Storage_SaveMultiple(filename, 1, loot, sizeof(Loot), count);
+  if (hdr.count == 0) {
+    return true;
+  }
+  return Storage_SaveMultiple(filename, 1, loot, sizeof(Loot), hdr.count);
 }
 
 bool LOOT_LoadFromFile(const char *filename) {
-  uint16_t count = 0;
+  LootFileHeader hdr = {0};
 
-  // Load count first
-  if (!Storage_Load(filename, 0, &count, sizeof(count))) {
+  if (!Storage_Load(filename, 0, &hdr, sizeof(hdr))) {
     return false;
   }
 
-  if (count == 0 || count > LOOT_SIZE_MAX) {
+  // Несовместимый формат — чистим и игнорируем
+  if (hdr.magic != LOOT_FILE_MAGIC || hdr.version != LOOT_FILE_VERSION ||
+      hdr.loot_size != sizeof(Loot) || hdr.count > LOOT_SIZE_MAX) {
     LOOT_Clear();
     return true;
   }
 
-  // Load all loot items
-  if (Storage_LoadMultiple(filename, 1, loot, sizeof(Loot), count)) {
-    lootIndex = count - 1;
-
-    // Restore gLastActiveLoot pointer
-    if (gLastActiveLootIndex >= 0 && gLastActiveLootIndex < count) {
-      gLastActiveLoot = &loot[gLastActiveLootIndex];
-    } else {
-      gLastActiveLoot = NULL;
-      gLastActiveLootIndex = -1;
-    }
-
+  if (hdr.count == 0) {
+    LOOT_Clear();
     return true;
   }
 
-  return false;
+  if (!Storage_LoadMultiple(filename, 1, loot, sizeof(Loot), hdr.count)) {
+    return false;
+  }
+
+  lootIndex = (int16_t)hdr.count - 1;
+
+  // open — runtime-флаг, после загрузки всегда сброшен
+  for (uint16_t i = 0; i < hdr.count; ++i) {
+    loot[i].open = 0;
+  }
+
+  // gLastActiveLoot нельзя восстановить из файла — указатель невалиден
+  gLastActiveLoot = NULL;
+  gLastActiveLootIndex = -1;
+  lastActiveLootF = 0;
+
+  return true;
 }
 
 // Default filename

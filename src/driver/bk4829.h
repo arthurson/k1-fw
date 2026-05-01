@@ -104,8 +104,8 @@ extern const Gain GAIN_TABLE[32];
 void BK4819_Init(void);
 uint16_t BK4819_ReadRegister(BK4819_REGISTER_t Register);
 void BK4819_WriteRegister(BK4819_REGISTER_t Register, uint16_t Data);
-void BK4819_WriteU8(uint8_t Data);
-void BK4819_WriteU16(uint16_t Data);
+/* void BK4819_WriteU8(uint8_t Data);
+void BK4819_WriteU16(uint16_t Data); */
 
 void BK4819_SetAGC(bool useDefault, uint8_t gainIndex);
 int8_t BK4819_GetAgcIndex();
@@ -122,7 +122,8 @@ void BK4819_SetupPowerAmplifier(uint8_t Bias, uint32_t Frequency);
 void BK4819_SetFrequency(uint32_t Frequency);
 uint32_t BK4819_GetFrequency(void);
 void BK4819_SetupSquelch(SQL sq, uint8_t delayO, uint8_t delayC);
-void BK4819_Squelch(uint8_t sql, uint32_t freq, uint8_t OpenDelay, uint8_t CloseDelay);
+void BK4819_Squelch(uint8_t sql, uint32_t freq, uint8_t OpenDelay,
+                    uint8_t CloseDelay);
 void BK4819_SquelchType(SquelchType t);
 
 void BK4819_SetAF(BK4819_AF_Type_t AF);
@@ -189,6 +190,8 @@ void BK4819_EnableFrequencyScan(void);
 void BK4819_EnableFrequencyScanEx(FreqScanTime t);
 void BK4819_EnableFrequencyScanEx2(FreqScanTime t, uint16_t hz);
 
+void BK4819_SetScanFrequency(uint32_t Frequency);
+
 void BK4819_StopScan(void);
 
 uint8_t BK4819_GetDTMF_5TONE_Code(void);
@@ -220,6 +223,11 @@ void BK4819_SetModulation(ModulationType type);
 void BK4819_SetIfMode(uint8_t mode);
 ModulationType BK4819_GetModulation();
 bool BK4819_IsSquelchOpen();
+
+// Spur shift: changes VCO band + PLL CP to move crystal harmonics
+// Mode 0 = default (current), 1-3 = alternate spur positions
+void BK4819_SetSpurShift(uint8_t mode);
+uint8_t BK4819_GetSpurShift(void);
 
 XtalMode BK4819_XtalGet();
 void BK4819_XtalSet(XtalMode mode);
