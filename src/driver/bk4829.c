@@ -587,9 +587,9 @@ void BK4819_SetIfMode(uint8_t mode) {
 }
 
 void BK4819_SetModulation(ModulationType type) {
-  if (gLastModulation == type) {
+  /* if (gLastModulation == type) {
     return;
-  }
+  } */
 
   if (type == MOD_BYP) {
     BK4819_EnterBypass();
@@ -614,13 +614,9 @@ void BK4819_SetModulation(ModulationType type) {
 
   // sound boost
   if (isSsb) {
-    BK4819_WriteRegister(0x54, 0x90D1); // default is 0x9009
-    BK4819_WriteRegister(0x55, 0x3271); // default is 0x31a9
-    BK4819_WriteRegister(0x75, 0xFC13); // default is 0xF50B
+    BK4819_WriteRegister(0x75, 0xFC13);
   } else {
-    BK4819_WriteRegister(0x54, 0x9009);
-    BK4819_WriteRegister(0x55, 0x31A9);
-    BK4819_WriteRegister(0x75, 0xF50B);
+    BK4819_WriteRegister(0x75, 0xF50B); // default
   }
 
   if (isSsb) {
@@ -631,7 +627,6 @@ void BK4819_SetModulation(ModulationType type) {
     BK4819_SetRegValue(RS_IF_F, 10923);
   }
 
-  // uint16_t reg4A = BK4819_ReadRegister(0x4A);
   uint16_t reg4A = 0x5430; // default
 
   if (isSsb || type == MOD_AM) {
