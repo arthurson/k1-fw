@@ -160,8 +160,10 @@ void SCMD_Rewind(SCMD_Context *ctx) {
   ctx->cmd_index = 0;
   ctx->call_ptr = 0;
 
-  LoadCommand(ctx, &ctx->current);
-  ctx->has_next = LoadCommand(ctx, &ctx->next);
+  do {
+    LoadCommand(ctx, &ctx->current);
+    ctx->has_next = LoadCommand(ctx, &ctx->next);
+  } while (ctx->current.skip);
 
   Log("[SCMD] Rewound to start");
 }

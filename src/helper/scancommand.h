@@ -58,10 +58,11 @@ static const char *SCMD_NAMES_SHORT[SCMD_COUNT] = {
 
 // Структура команды
 typedef struct {
-  uint8_t type;         // Тип команды
-  uint8_t priority;     // Приоритет
-  uint8_t flags;        // Флаги
-  uint8_t reserved;     // Зарезервировано
+  uint8_t type;     // Тип команды
+  uint8_t priority; // Приоритет
+  uint8_t flags;    // Флаги
+  bool skip;
+  uint8_t reserved : 7; // Зарезервировано
   uint16_t dwell_ms;    // Время на точке (мс)
   uint16_t timeout_ms;  // Таймаут
   uint16_t goto_offset; // Смещение для перехода

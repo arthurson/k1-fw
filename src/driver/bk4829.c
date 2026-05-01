@@ -638,9 +638,6 @@ void BK4819_SetModulation(ModulationType type) {
     reg4A |= 0b1111111;
   } else {
     reg4A = (reg4A & ~0b1111111) | 46;
-    /* if (type == MOD_FM) {
-      reg4A = (reg4A & ~0b1111111) | 40;
-    } */
   }
   BK4819_WriteRegister(0x4A, reg4A);
 
